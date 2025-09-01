@@ -1,0 +1,25 @@
+topology:
+  hosts:
+    - james
+    - mike
+    - s17
+    - s18
+
+model:
+  architecture: "llama"
+  dimensions:
+    hidden_size: 128
+    intermediate_size: 256  # 384 * 4
+    num_layers: 4
+  attention:
+    num_heads: 8
+  normalization:
+    rms_norm_eps: 1.0e-5
+  rope:
+    theta: 10000
+    traditional: false
+    scaling: null
+  misc:
+    attention_bias: false
+    mlp_bias: false
+    tie_word_embeddings: true
