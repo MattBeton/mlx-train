@@ -22,7 +22,16 @@ def check_sshpass() -> bool:
 
 
 def get_common_password() -> str:
-    """Get the common password for all hosts from user input."""
+    """Get the common password for all hosts from environment variable or user input."""
+    # Try to get password from environment variable first
+    password = os.getenv("EXO_DEVICE_PASSWORD")
+    
+    if password:
+        print("Using password from EXO_DEVICE_PASSWORD environment variable.")
+        return password
+    
+    # Fall back to user input if environment variable is not set
+    print("EXO_DEVICE_PASSWORD not found in environment.")
     password = getpass.getpass("Enter the common password for all hosts: ")
     return password
 

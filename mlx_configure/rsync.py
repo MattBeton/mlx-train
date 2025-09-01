@@ -35,15 +35,9 @@ def load_hosts(filename):
     sys.exit(1)
 
 
-def rsync(host_info, destination_path_str):
+def rsync(host: str, destination_path_str: str):
   """Sync files to a single host using rsync and set up environment with uv. Returns a dict with status."""
-  ssh_host = host_info.get("ssh")
-  if not ssh_host:
-    return {
-      "host": str(host_info),
-      "success": False,
-      "details": f"Skipping host entry, 'ssh' key missing or empty: {host_info}",
-    }
+  ssh_host = host
 
   remote_dest = f"{ssh_host}:{destination_path_str}/"
   source_dir = "./"
@@ -148,6 +142,21 @@ def rsync(host_info, destination_path_str):
     )
 
     # Use uv sync to set up the environment and install dependencies
+    # First verify uv is accessible with our path
+    verify_uv_cmd = [
+      "ssh",
+      ssh_host,
+      f"{uv_path_prefix}which uv && uv --version",
+    ]
+    try:
+      result = subprocess.run(
+        verify_uv_cmd, check=True, capture_output=True, text=True, encoding='utf-8'
+      )
+      print(f"  uv found on {ssh_host}: {result.stdout.strip().split()[0]}")
+    except subprocess.CalledProcessError as e:
+      raise Exception(f"uv not accessible after installation. PATH prefix: {uv_path_prefix}")
+    
+    # Now run uv sync
     sync_cmd = [
       "ssh",
       ssh_host,
@@ -178,7 +187,7 @@ def rsync(host_info, destination_path_str):
   }
 
 
-def sync_all_hosts(hosts, destination_path, max_workers=5):
+def sync_all_hosts(hosts: list[str], destination_path: str, max_workers: int = 5):
   """Sync to all hosts in parallel."""
   results = []
   
