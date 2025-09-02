@@ -35,27 +35,61 @@ def load_hosts(filename):
     sys.exit(1)
 
 
-def rsync(host: str, destination_path_str: str):
-  """Sync files to a single host using rsync and set up environment with uv. Returns a dict with status."""
-  ssh_host = host
+def rsync(host, destination_path_str: str, source_path_str: str = "./", setup_uv: bool = True):
+  """Sync files to a single host using rsync and optionally set up environment with uv. Returns a dict with status."""
+  
+  # Handle both string hosts and dictionary hosts from hosts.json
+  if isinstance(host, dict):
+    ssh_host = host.get('ssh', host)
+  else:
+    ssh_host = host
 
-  remote_dest = f"{ssh_host}:{destination_path_str}/"
-  source_dir = "./"
+  # Ensure paths are strings
+  source_path_str = str(source_path_str)
+  destination_path_str = str(destination_path_str)
 
+  # Ensure proper trailing slash for directories
+  if os.path.isdir(source_path_str):
+    if not source_path_str.endswith('/'):
+      source_path_str += '/'
+  
+  # Add trailing slash to remote dest if source is a directory
+  if source_path_str.endswith('/'):
+    if not destination_path_str.endswith('/'):
+      destination_path_str += '/'
+  
+  remote_dest = f"{ssh_host}:{destination_path_str}"
+  
+  # Create parent directory on remote if it doesn't exist
+  # Use shell expansion for paths starting with ~
+  parent_dir = os.path.dirname(destination_path_str.rstrip('/'))
+  if parent_dir and parent_dir != '/':
+    # Use bash -c to ensure proper tilde expansion on remote
+    mkdir_cmd = ["ssh", ssh_host, "bash", "-c", f"mkdir -p {parent_dir}"]
+    try:
+      subprocess.run(mkdir_cmd, check=True, capture_output=True, text=True, encoding='utf-8')
+    except subprocess.CalledProcessError:
+      # Directory might already exist or we don't have permissions, continue anyway
+      pass
+  
   cmd_rsync = [
     "rsync",
     "-az",  # Archive, compress. (No -v for less rsync verbosity)
     "--delete",
-    "--exclude=.git",
-    "--exclude=mlx*/",
-    "--exclude=bench*/",
-    "--exclude=cache*/",
   ]
-
-  if os.path.exists(GITIGNORE_FILE):
-    cmd_rsync.append(f"--exclude-from={GITIGNORE_FILE}")
   
-  cmd_rsync.extend([source_dir, remote_dest])
+  # Only apply project-specific excludes when syncing current directory
+  if source_path_str in ["./", "."]:
+    cmd_rsync.extend([
+      "--exclude=.git",
+      "--exclude=bench*/",
+      "--exclude=cache*/",
+    ])
+    
+    if os.path.exists(GITIGNORE_FILE):
+      cmd_rsync.append(f"--exclude-from={GITIGNORE_FILE}")
+  
+  cmd_rsync.extend([source_path_str, remote_dest])
 
   try:
     subprocess.run(
@@ -77,7 +111,14 @@ def rsync(host: str, destination_path_str: str):
       "details": f"Rsync unexpected error: {e}",
     }
 
-  # After successful sync, set up environment with uv on remote host
+  # After successful sync, optionally set up environment with uv on remote host
+  if not setup_uv:
+    return {
+      "host": ssh_host,
+      "success": True,
+      "details": "Successfully synced files.",
+    }
+  
   try:
     # Check if uv is installed on remote host (try both common locations)
     check_uv_cmd = [
@@ -187,14 +228,16 @@ def rsync(host: str, destination_path_str: str):
   }
 
 
-def sync_all_hosts(hosts: list[str], destination_path: str, max_workers: int = 5):
+def sync_all_hosts(hosts: list, destination_path: str, source_path: str = "./", 
+                   setup_uv: bool = True, max_workers: int = 5):
   """Sync to all hosts in parallel."""
+  print(f"DEBUG sync_all_hosts: dest={destination_path}, src={source_path}, setup_uv={setup_uv}, max_workers={max_workers}")
   results = []
   
   with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
     # Submit all rsync tasks
     future_to_host = {
-      executor.submit(rsync, host, destination_path): host 
+      executor.submit(rsync, host, destination_path, source_path, setup_uv): host 
       for host in hosts
     }
     
@@ -215,7 +258,7 @@ def sync_all_hosts(hosts: list[str], destination_path: str, max_workers: int = 5
 def main():
   """Main entry point for the rsync script."""
   parser = argparse.ArgumentParser(
-    description="Sync project files to remote hosts and set up uv environment"
+    description="Sync files to remote hosts and optionally set up uv environment"
   )
   parser.add_argument(
     "--hosts-file",
@@ -223,9 +266,19 @@ def main():
     help="Path to the hosts JSON file (default: hosts.json)"
   )
   parser.add_argument(
+    "--source",
+    default="./",
+    help="Source path to sync from (default: ./ - current directory)"
+  )
+  parser.add_argument(
     "--destination",
     default="/Users/Shared/mlx-train",
     help="Destination path on remote hosts (default: /Users/Shared/mlx-train)"
+  )
+  parser.add_argument(
+    "--no-uv",
+    action="store_true",
+    help="Skip uv environment setup (useful for non-Python projects or general file sync)"
   )
   parser.add_argument(
     "--max-workers",
@@ -242,16 +295,32 @@ def main():
   # Load hosts
   hosts = load_hosts(args.hosts_file)
   
-  # Expand destination path
-  destination = str(Path(args.destination).expanduser())
+  # Expand source path locally only
+  source = str(Path(args.source).expanduser())
+  
+  # For destination: if it starts with ~, keep it for remote expansion
+  # If it's already expanded to a user home path, convert it back to ~
+  if args.destination.startswith('~'):
+    destination = args.destination
+  elif args.destination.startswith(str(Path.home())):
+    # Convert absolute home path back to ~ for remote expansion
+    destination = '~' + args.destination[len(str(Path.home())):]
+  else:
+    # Keep absolute paths as-is
+    destination = args.destination
+  setup_uv = not args.no_uv
   
   print(f"Syncing to {len(hosts)} hosts...")
+  print(f"Source: {source}")
   print(f"Destination: {destination}")
-  print(f"Using uv for dependency management")
+  if setup_uv:
+    print(f"Using uv for dependency management")
+  else:
+    print(f"Skipping uv setup (general file sync)")
   print("-" * 40)
   
   # Sync to all hosts
-  results = sync_all_hosts(hosts, destination, args.max_workers)
+  results = sync_all_hosts(hosts, destination, source, setup_uv, args.max_workers)
   
   # Summary
   successful = sum(1 for r in results if r["success"])

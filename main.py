@@ -1,33 +1,27 @@
 import sys
 import mlx
 import mlx.core as mx
+from mlx.nn.utils import tree_map
 
-world = None
-rank = None
-
-def init_process_group():
-  global world, rank
-  try:
-    world = mx.distributed.init()
-    rank = world.rank()
-    size = world.size()
-    if rank == 0:
-      print(f"Rank {rank}: Initialized with {size} processes")
-    sys.stdout.flush()
-    return rank, size
-  except RuntimeError as e:
-    print(f"Error initializing mx.distributedributed environment: {e}")
-    exit(1)
+import mlx_train.distributed as dist
+from mlx_train.model import *
+from shared.config import load_config
 
 def rprint(msg: str):
-  if rank == 0:
-    print(f"Rank 0: {msg}")
-    sys.stdout.flush()
+    if dist.rank == 0:
+        print(f"Rank 0: {msg}")
+        sys.stdout.flush()
 
 def main():
-    init_process_group()
+    dist.init_process_group()
 
-    
+    config = load_config()    
+
+    model, tokenizer = load_model_tokenizer(config['model'])
+
+    tree_map(lambda x: print(x), model.parameters())
+
+    model = dist.all_reduce_tree(model)
 
 if __name__ == "__main__":
     main()

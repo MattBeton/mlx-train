@@ -7,6 +7,8 @@ requires-python = ">=3.13"
 dependencies = [
     "dotenv>=0.9.9",
     "mlx>=0.29.0",
+    "mlx-lm>=0.27.0",
+    "pydantic>=2.11.7",
     "pyyaml>=6.0.2",
 ]
 

@@ -66,11 +66,11 @@ async def check_ring(hostfile: str = 'hosts.json'):
             print(f"Host {current_ssh} has no IP address")
             return False
         
-        prev_index = (i - 1) % len(hosts)
-        prev_ip = hosts[prev_index]['ips'][0]
+        next_index = (i + 1) % len(hosts)
+        next_ip = hosts[next_index]['ips'][0]
         
-        tasks.append(check_reachability(current_ssh, prev_ip))
-        checks_info.append(f"{current_ssh} -> {hosts[prev_index]['ssh']} ({prev_ip})")
+        tasks.append(check_reachability(current_ssh, next_ip))
+        checks_info.append(f"{current_ssh} -> {hosts[next_index]['ssh']} ({next_ip})")
     
     results = await asyncio.gather(*tasks)
     
@@ -83,7 +83,7 @@ async def check_ring(hostfile: str = 'hosts.json'):
             all_success = False
     
     if all_success:
-        print("\n✓ Ring connectivity check PASSED - all nodes can reach their predecessors")
+        print("\n✓ Ring connectivity check PASSED - all nodes can reach their successors")
     else:
         print("\n✗ Ring connectivity check FAILED - some connections are broken")
     
