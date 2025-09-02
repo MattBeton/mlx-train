@@ -1,6 +1,5 @@
 from typing import Any
 
-
 import argparse
 import asyncio
 import os
@@ -33,22 +32,22 @@ async def rsync_to_hosts(active_hosts):
 
 
 async def handle_run_command(args):
-    """Handle the run command - rsync code and configure distributed setup in parallel, then run training."""
+    """Handle the run command - rsync code and check ring in parallel, setup ring if needed, then run training."""
     # Load configuration
     config = load_config()
     hosts = config['topology']['hosts']
     
     print(f"Setting up distributed training with hosts: {hosts}")
     
-    # Step 1: Run rsync and distributed_config in parallel
-    print("\n1. Syncing code and configuring distributed setup in parallel...")
+    # Step 1: Run rsync and check_ring in parallel
+    print("\n1. Syncing code and checking ring connectivity in parallel...")
     
-    # Create tasks for rsync and distributed config
+    # Create tasks for rsync and ring check
     rsync_task = rsync_to_hosts(hosts)
-    config_task = distributed_config(hosts)
+    ring_check_task = check_ring()
     
     # Run both tasks in parallel
-    results = await asyncio.gather(rsync_task, config_task, return_exceptions=True)
+    results = await asyncio.gather(rsync_task, ring_check_task, return_exceptions=True)
     
     # Check rsync result
     rsync_result = results[0]
@@ -59,23 +58,43 @@ async def handle_run_command(args):
         print(f"✗ Rsync failed with code {rsync_result}")
         return rsync_result
     
-    # Check distributed_config result
-    config_result = results[1]
-    if isinstance(config_result, Exception):
-        print(f"✗ Distributed configuration failed: {config_result}")
-        return 1
-    elif config_result != 0:
-        print(f"✗ Distributed configuration failed with code {config_result}")
-        return config_result
+    print("✓ Code synced successfully")
     
-    print("✓ Code synced and distributed configuration complete")
-
-    # Step 2: check the ring is built
-    if args.should_check_ring:
-        result = await check_ring()
+    # Check ring connectivity result
+    ring_check_result = results[1]
+    ring_is_healthy = False
     
-    # Step 2: Run the training
-    print(f"\n2. Starting training on {len(hosts)} hosts...")
+    if isinstance(ring_check_result, Exception):
+        print(f"✗ Ring check failed with exception: {ring_check_result}")
+    elif ring_check_result:
+        print("✓ Ring connectivity is already healthy")
+        ring_is_healthy = True
+    else:
+        print("✗ Ring connectivity check failed")
+    
+    # Step 2: If ring check failed, run distributed_config to set up the ring
+    if not ring_is_healthy:
+        print("\n2. Setting up distributed configuration...")
+        config_result = await distributed_config(hosts)
+        
+        if config_result != 0:
+            print(f"✗ Distributed configuration failed with code {config_result}")
+            return config_result
+        
+        print("✓ Distributed configuration complete")
+        
+        # Step 3: Verify ring connectivity after setup
+        print("\n3. Verifying ring connectivity after setup...")
+        ring_verify_result = await check_ring()
+        
+        if not ring_verify_result:
+            print("✗ Ring connectivity verification failed after setup")
+            return 1
+        
+        print("✓ Ring connectivity verified successfully")
+    
+    # Step 4: Run the training
+    print(f"\n4. Starting training on {len(hosts)} hosts...")
     script_path = args.script if hasattr(args, 'script') else "main.py"
     run_result = await run(script_path)
     
