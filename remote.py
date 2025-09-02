@@ -1,11 +1,18 @@
+from typing import Any
+
+
 import argparse
 import asyncio
 import os
+import getpass
 from pathlib import Path
+from mlx_configure.hosts import check_ring
 from shared.config import *
 from mlx_configure.distributed_config import distributed_config
 from mlx_configure.run import run
 from mlx_configure.rsync import sync_all_hosts, load_hosts
+from mlx_configure.restart import restart_all_hosts, restart_host, load_hosts_from_json
+from mlx_configure.enable_nopasswd_sudo import enable_nopasswd_all_hosts
 
 async def rsync_to_hosts(active_hosts):
     """
@@ -62,6 +69,10 @@ async def handle_run_command(args):
         return config_result
     
     print("✓ Code synced and distributed configuration complete")
+
+    # Step 2: check the ring is built
+    if args.should_check_ring:
+        result = await check_ring()
     
     # Step 2: Run the training
     print(f"\n2. Starting training on {len(hosts)} hosts...")
@@ -74,6 +85,70 @@ async def handle_run_command(args):
     
     print("✓ Training complete")
     return 0
+
+
+
+async def handle_ring_command(args):
+    result = await check_ring()
+
+    if not result:
+        print('Ring failed!')
+    
+    print("✓ Training complete")
+    return 0
+
+
+async def handle_restart_command(args):
+    """Handle the restart command - reboot hosts."""
+    if args.host:
+        # Restart a specific host
+        print(f"Attempting to reboot {args.host}...")
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, restart_host, args.host)
+        
+        if result["success"]:
+            print(f"{args.host}: {result['message']}")
+            return 0
+        else:
+            print(f"{args.host}: {result['message']}")
+            return 1
+    else:
+        # Restart all hosts from config or hosts.json
+        if args.use_hosts_json:
+            # Use hosts.json
+            try:
+                loop = asyncio.get_event_loop()
+                hosts = await loop.run_in_executor(None, load_hosts_from_json)
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                return 1
+            
+            if not hosts:
+                print("No hosts found in hosts.json")
+                return 1
+        else:
+            # Use config.yaml (default)
+            config = load_config()
+            hosts = config['topology']['hosts']
+            
+            if not hosts:
+                print("No hosts found in config.yaml")
+                return 1
+        
+        print(f"Rebooting {len(hosts)} hosts...")
+        print("-" * 40)
+        
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, restart_all_hosts, hosts, 5)
+        
+        # Summary
+        successful = sum(1 for r in results if r["success"])
+        failed = len(results) - successful
+        
+        print("-" * 40)
+        print(f"Summary: {successful} successful, {failed} failed")
+        
+        return 1 if failed > 0 else 0
 
 
 async def handle_sudo_command(args):
@@ -171,6 +246,47 @@ def main():
         default="main.py",
         help="Python script to run (default: main.py)"
     )
+    parser_run.add_argument(
+        "--should_check_ring",
+        action='store_true',
+        help="Python script to run (default: main.py)"
+    )
+
+    # Check ring command 
+    parser_run = subparsers.add_parser(
+        "ring",
+        help="Check that the ring is built",
+        description="Asserts that all rings are ping-able",
+    )
+    
+    # Restart command
+    parser_restart = subparsers.add_parser(
+        "restart",
+        help="Restart (reboot) hosts via SSH",
+        description="Send reboot commands to hosts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  # Restart all hosts from config.yaml:
+  python remote.py restart
+  
+  # Restart all hosts from hosts.json:
+  python remote.py restart --use-hosts-json
+  
+  # Restart a specific host:
+  python remote.py restart --host james
+  
+Note: Requires password-less sudo on target hosts
+        """
+    )
+    parser_restart.add_argument(
+        "--host",
+        help="Specific host to restart (if not provided, restarts all hosts)"
+    )
+    parser_restart.add_argument(
+        "--use-hosts-json",
+        action="store_true",
+        help="Use hosts.json instead of config.yaml for host list"
+    )
     
     # Sudo configuration command
     parser_sudo = subparsers.add_parser(
@@ -215,6 +331,13 @@ Note: Use % for group names (e.g., %admin, %wheel)
     if args.command == "run":
         # Run the async handler
         result = asyncio.run(handle_run_command(args))
+        exit(result)
+    elif args.command == "ring":
+        result = asyncio.run(handle_ring_command(args))
+        exit(result)
+    elif args.command == "restart":
+        # Run the restart handler
+        result = asyncio.run(handle_restart_command(args))
         exit(result)
     elif args.command == "sudo":
         # Run the sudo configuration handler
