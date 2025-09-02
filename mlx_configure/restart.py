@@ -5,10 +5,13 @@ Restart (reboot) hosts via SSH.
 import json
 import subprocess
 import sys
-import yaml
 from pathlib import Path
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.config import load_config
 
 
 def restart_host(hostname: str, timeout: int = 10) -> Dict[str, any]:
@@ -143,18 +146,17 @@ def main():
             sys.exit(1)
     
     else:
-        # No specific host - use hosts.json
         try:
-            hosts = load_hosts_from_json()
-        except FileNotFoundError as e:
+            hosts = load_config()['topology']['hosts']
+        except (FileNotFoundError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
         
         if not hosts:
-            print("No hosts found in hosts.json", file=sys.stderr)
+            print("No hosts found in config.yaml", file=sys.stderr)
             sys.exit(1)
         
-        print(f"No specific host provided. Rebooting all {len(hosts)} hosts from hosts.json...")
+        print(f"No specific host provided. Rebooting all {len(hosts)} hosts from config.yaml...")
         print("-" * 40)
         
         results = restart_all_hosts(hosts)

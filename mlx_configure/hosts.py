@@ -43,7 +43,7 @@ async def check_reachability(current_host_ssh, next_host_ip, verbose=False):
 async def check_ring(hostfile: str = 'hosts.json'):
     """
     Read hosts and ips from hosts.json. 
-    From each node, ping its predecessor and successor in parallel
+    From each node, ping its predecessor only
     Return true if all pings are successful (ring is complete)
     """
     import json
@@ -67,16 +67,10 @@ async def check_ring(hostfile: str = 'hosts.json'):
             return False
         
         prev_index = (i - 1) % len(hosts)
-        next_index = (i + 1) % len(hosts)
-        
         prev_ip = hosts[prev_index]['ips'][0]
-        next_ip = hosts[next_index]['ips'][0]
         
         tasks.append(check_reachability(current_ssh, prev_ip))
         checks_info.append(f"{current_ssh} -> {hosts[prev_index]['ssh']} ({prev_ip})")
-        
-        tasks.append(check_reachability(current_ssh, next_ip))
-        checks_info.append(f"{current_ssh} -> {hosts[next_index]['ssh']} ({next_ip})")
     
     results = await asyncio.gather(*tasks)
     
@@ -89,7 +83,7 @@ async def check_ring(hostfile: str = 'hosts.json'):
             all_success = False
     
     if all_success:
-        print("\n✓ Ring connectivity check PASSED - all nodes can reach their neighbors")
+        print("\n✓ Ring connectivity check PASSED - all nodes can reach their predecessors")
     else:
         print("\n✗ Ring connectivity check FAILED - some connections are broken")
     
