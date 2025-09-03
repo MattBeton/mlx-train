@@ -385,9 +385,11 @@ async def sync_through_ring(source_path: str, destination_path: str,
                 if line:
                     all_output.append(line)
                     
-                    # Check if this is a progress line
-                    if '%' in line and 'xfr#' in line:
-                        print(f"\r  local -> {first_host}: {line}", end='', flush=True)
+                    # Check if this is a progress line (--progress format)
+                    if '%' in line or ('bytes' in line and '/' in line):
+                        # Truncate long lines for display
+                        display_line = line[:80] if len(line) > 80 else line
+                        print(f"\r  local -> {first_host}: {display_line}", end='', flush=True)
                         last_was_progress = True
                     else:
                         if last_was_progress:
