@@ -2,6 +2,7 @@ from shared.config import load_config
 
 from mlx_lm.utils import load
 from mlx_lm.generate import generate
+from mlx_lm.sample_utils import make_sampler
 
 def main():
     config = load_config()
@@ -9,8 +10,7 @@ def main():
     # model, tokenizer = load(config['model']['repo_id'])
     model, tokenizer = load(config['model']['repo_id'], adapter_path=config['model']['output_location'], lazy=False)
 
-    # prompt_user = input()
-    prompt_user = "How do I cook spaghetti for dinner?"
+    prompt_user = input(">>> ")
     messages = [
         {'role': 'system', 'content': 'You are a helpful assistant.'},
         {'role': 'user', 'content': prompt_user},
@@ -20,11 +20,10 @@ def main():
         tokenize=False
     ) 
 
-    print(prompt)
-
     print("\n" + "###" * 10 + "\n")
 
-    response = generate(model, tokenizer, prompt)
+    sampler = make_sampler(temp=0.8)
+    response = generate(model, tokenizer, prompt, sampler=sampler)
     print(response)
 
 if __name__ == '__main__':

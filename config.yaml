@@ -17,6 +17,12 @@ model:
     scale: 16
     dropout: 0.0
 
+  grad_checkpoint: 'medium'
+  # grad_checkpoint: 'none'
+
+  distributed: 'dp'
+  # distributed: 'ppp'
+
   # architecture: "llama"
   # dimensions:
   #   hidden_size: 128
