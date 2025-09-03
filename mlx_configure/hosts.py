@@ -1,4 +1,3 @@
-import subprocess
 import asyncio
 
 async def check_reachability(current_host_ssh, next_host_ip, verbose=False):

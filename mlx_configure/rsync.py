@@ -194,7 +194,7 @@ def rsync(host, destination_path_str: str, source_path_str: str = "./", setup_uv
         verify_uv_cmd, check=True, capture_output=True, text=True, encoding='utf-8'
       )
       print(f"  uv found on {ssh_host}: {result.stdout.strip().split()[0]}")
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
       raise Exception(f"uv not accessible after installation. PATH prefix: {uv_path_prefix}")
     
     # Now run uv sync
@@ -314,9 +314,9 @@ def main():
   print(f"Source: {source}")
   print(f"Destination: {destination}")
   if setup_uv:
-    print(f"Using uv for dependency management")
+    print("Using uv for dependency management")
   else:
-    print(f"Skipping uv setup (general file sync)")
+    print("Skipping uv setup (general file sync)")
   print("-" * 40)
   
   # Sync to all hosts

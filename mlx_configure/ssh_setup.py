@@ -72,7 +72,7 @@ def setup_ssh_config(devices: List[str]) -> None:
             
             # Append the new Host entry
             with open(ssh_config_file, 'a') as f:
-                f.write(f"\n")
+                f.write("\n")
                 f.write(f"Host {device_name}\n")
                 f.write(f"    User {device_name}\n")
             

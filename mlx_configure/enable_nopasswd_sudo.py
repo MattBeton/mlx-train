@@ -3,10 +3,9 @@
 import subprocess
 import sys
 import argparse
-import getpass
 import concurrent.futures
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 # Add parent directory to path to import shared module
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -280,14 +279,14 @@ Note: Use %% for group names (e.g., %%admin, %%wheel)
     hosts = load_hosts()
     
     # Show what we're about to do
-    print(f"Enable Password-less Sudo Configuration")
-    print(f"=" * 40)
-    print(f"Config file: config.yaml")
+    print("Enable Password-less Sudo Configuration")
+    print("=" * 40)
+    print("Config file: config.yaml")
     print(f"Number of hosts: {len(hosts)}")
     print(f"Remote user: {args.remote_user}")
     print(f"Rule target: {args.rule_target}")
     print(f"Max parallel: {args.max_workers}")
-    print(f"=" * 40)
+    print("=" * 40)
     
     # Get sudo password
     sudo_password = os.environ.get("EXO_DEVICE_PASSWORD")
@@ -316,7 +315,7 @@ Note: Use %% for group names (e.g., %%admin, %%wheel)
     if successful > 0:
         print(f"\n✅ Password-less sudo enabled on {successful} host(s)")
         print(f"   Rule: {args.rule_target} ALL=(ALL) NOPASSWD:ALL")
-        print(f"   File: /etc/sudoers.d/fleet-nopasswd")
+        print("   File: /etc/sudoers.d/fleet-nopasswd")
     
     # Exit with error if any failed
     if failed > 0:

@@ -7,7 +7,6 @@ import os
 import sys
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
-import concurrent.futures
 
 async def load_ring_hosts(hostfile: str = 'hosts.json') -> List[Dict]:
     """Load hosts from hosts.json file."""
@@ -305,14 +304,14 @@ async def sync_through_ring(source_path: str, destination_path: str,
         # Keep absolute paths as-is
         remote_destination = destination_path
     
-    print(f"Ring Sync Configuration")
-    print(f"=" * 40)
+    print("Ring Sync Configuration")
+    print("=" * 40)
     print(f"Source: {source_path}")
     print(f"Destination: {remote_destination}")
     print(f"Initial host: {initial_host or 'local machine'}")
     print(f"Ring size: {len(hosts)} hosts")
     print(f"Ring order: {' -> '.join([h['ssh'] for h in hosts])} -> {hosts[0]['ssh']} (loops back)")
-    print(f"=" * 40)
+    print("=" * 40)
     
     # Step 1: Propagate SSH keys if requested
     if propagate_keys:
@@ -322,7 +321,7 @@ async def sync_through_ring(source_path: str, destination_path: str,
             # Continue anyway, as some connections might still work
     
     # Step 2: Initial sync from local or initial_host to first node in ring
-    print(f"\n📤 Initial sync to first node in ring...")
+    print("\n📤 Initial sync to first node in ring...")
     
     first_host = hosts[0]['ssh']
     
@@ -421,10 +420,10 @@ async def sync_through_ring(source_path: str, destination_path: str,
             return 1
     
     # Step 3: Propagate through the ring
-    print(f"\n🔄 Propagating through the ring...")
+    print("\n🔄 Propagating through the ring...")
     
     if parallel:
-        print(f"Note: Syncing in parallel (progress may be interleaved)\n")
+        print("Note: Syncing in parallel (progress may be interleaved)\n")
         
         tasks = []
         sync_pairs = []
@@ -457,7 +456,7 @@ async def sync_through_ring(source_path: str, destination_path: str,
                 print(f"✗ {current} -> {next_host}: {message}")
                 all_success = False
     else:
-        print(f"Note: Syncing sequentially for clear progress visibility\n")
+        print("Note: Syncing sequentially for clear progress visibility\n")
         
         all_success = True
         
@@ -487,10 +486,10 @@ async def sync_through_ring(source_path: str, destination_path: str,
     
     # Summary
     if all_success:
-        print(f"\n✅ Ring sync completed successfully!")
+        print("\n✅ Ring sync completed successfully!")
         print(f"   {source_path} has been synced to all {len(hosts)} nodes")
     else:
-        print(f"\n❌ Ring sync failed - some nodes may not have received the files")
+        print("\n❌ Ring sync failed - some nodes may not have received the files")
         return 1
     
     return 0

@@ -6,9 +6,8 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.config import load_config
