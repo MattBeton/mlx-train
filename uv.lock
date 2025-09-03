@@ -187,6 +187,18 @@ wheels = [
 ]
 
 [[package]]
+name = "mlx-data"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/30/50f2c0df29a307fff180276a53a01c6529a37d6968faf183b07b6c3ad6da/mlx_data-0.1.0-cp313-cp313-macosx_13_0_arm64.whl", hash = "sha256:4a3fb9b5aa62e8910a9caa43568fedb3d2ef331f1d371fc213cc74bb961a8a82", size = 13382516 },
+    { url = "https://files.pythonhosted.org/packages/09/4d/c86801e92fe71fa1716cdcd716e4858314b9347df453ad37c24d10f19a2d/mlx_data-0.1.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:35aa46a8b5d632e9ac20e0a22f97945917892efe050e0a2fe80cf11b23f6e395", size = 18024056 },
+]
+
+[[package]]
 name = "mlx-lm"
 version = "0.27.0"
 source = { registry = "https://pypi.org/simple" }
@@ -220,7 +232,9 @@ source = { virtual = "." }
 dependencies = [
     { name = "dotenv" },
     { name = "mlx" },
+    { name = "mlx-data" },
     { name = "mlx-lm" },
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
@@ -229,7 +243,9 @@ dependencies = [
 requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "mlx", specifier = ">=0.29.0" },
+    { name = "mlx-data", specifier = ">=0.1.0" },
     { name = "mlx-lm", specifier = ">=0.27.0" },
+    { name = "numpy", specifier = ">=2.3.2" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pyyaml", specifier = ">=6.0.2" },
 ]

@@ -6,6 +6,11 @@ import mlx.utils as utils
 
 rank, size = 0, 1
 
+def rprint(msg: str, selective: bool = True):
+    if not selective or rank == 0:
+        print(f"Rank {rank}: {msg}")
+        sys.stdout.flush()
+
 # def assert_distributed(func):
 #     def wrapper(*args, **kwargs):
 #         if rank is None or size is None:
@@ -23,7 +28,6 @@ def init_process_group():
         if rank == 0:
             print(f"Rank {rank}: Initialized with {size} processes")
         sys.stdout.flush()
-        print(rank, size)
         return rank, size
     except RuntimeError as e:
         print(f"Error initializing mx.distributedributed environment: {e}")
