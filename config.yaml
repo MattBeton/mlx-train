@@ -6,7 +6,16 @@ topology:
     - s18
 
 model:
-  repo_id: mlx-community/Llama-3.2-1B-Instruct-bf16
+  repo_id: mlx-community/Llama-3.2-1B-Instruct-4bit
+  # repo_id: mlx-community/Llama-3.2-1B-Instruct-bf16
+  
+  output_location: ./model_output/
+
+  lora:
+    num_layers: 16
+    rank: 8
+    scale: 16
+    dropout: 0.0
 
   # architecture: "llama"
   # dimensions:
@@ -26,7 +35,12 @@ model:
   #   mlp_bias: false
   #   tie_word_embeddings: true
 
+optimizer:
+  learning_rate: 0.0002
+  eps: 0.0001
+
 dataset:
   path: "./data/train.jsonl"
-  batch_size: 2
+  batch_size: 8
   max_seq_length: 1024
+  epochs: 1 

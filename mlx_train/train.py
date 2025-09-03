@@ -1,56 +1,56 @@
 from functools import partial
 import mlx.core as mx
 import mlx.nn as nn
-from mlx.nn.utils import tree_map
-import mlx.optimizers as optim
-import mlx.utils as utils
-import time
-import dataclasses
-from mlx_lm.models.gpt2 import Model as GPT2, ModelArgs
-from mlx_train.utils import *
-import json
-import sys
-from tqdm import tqdm
-import dotenv
-import os
+from mlx_lm.tuner.trainer import default_loss
 
+from mlx_train.utils import *
 import mlx_train.distributed as dist
 
-def train_step(model, loss_and_grad_fn, optimizer, batch):
+def simple_loss_fn(model, batch, lengths):
+    inputs = batch[:, :-1]
+    targets = batch[:, 1:]
+
+    ce = nn.losses.cross_entropy(model(inputs), targets, reduction='mean')
+    ntoks = targets.shape[0] * targets.shape[1]
+
+    return ce, ntoks
+
+def train_step(model, loss_and_grad_fn, optimizer, batch, lengths):
     state = [model.state, optimizer.state, mx.random.state]
 
     @partial(mx.compile, inputs=state, outputs=state)
-    def step(X, y):
-        loss, grads = loss_and_grad_fn(model, X, y)
+    def step(batch, lengths):
+        (loss, ntoks), grads = loss_and_grad_fn(model, batch, lengths)
         grads = nn.average_gradients(grads)
         optimizer.update(model, grads)
 
-        return loss
+        # mx.eval(grads)
+        # print(tree_map(lambda x: x.dtype, grads))
 
-    loss = step(*batch)
+        return loss, ntoks
+
+    loss, ntoks = step(batch, lengths)
     mx.eval(loss, model.parameters())
     dist.barrier()
 
     return loss.item()
 
-def build_loss_and_grad(model: nn.Module, config):
-    def loss_fn(model, X, y):
-        return nn.losses.cross_entropy(model(X), y, reduction='mean')
-
-    return nn.value_and_grad(model, loss_fn)
+def build_loss_and_grad(model: nn.Module, config, loss=default_loss):
+    return nn.value_and_grad(model, loss)
 
 def train(model: nn.Module, optimizer, dataset_iter, config):
     model.train()
 
     loss_and_grad_fn = build_loss_and_grad(model, config)
 
-    if dist.rank == 0:
-        dataset_iter = tqdm(dataset_iter, desc="Training")
-    
-    for batch in dataset_iter:
-        loss = train_step(model, loss_and_grad_fn, optimizer, batch)
+    tokens_trained = 0
 
-        if dist.rank == 0:
-            dataset_iter.set_postfix(loss=f"{loss:.4f}")
-        else:
-            dist.rprint(f'{loss=}')
+    for batch, lengths in dataset_iter:
+        loss = train_step(model, loss_and_grad_fn, optimizer, batch, lengths)
+
+        tokens_trained += batch.shape[0] * dist.size
+
+        dist.rprint(f'{loss=}, {tokens_trained=}')
+
+        if tokens_trained >= config['dataset']['dataset_examples'] * config['dataset']['epochs']:
+            break

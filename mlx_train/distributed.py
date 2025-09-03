@@ -1,6 +1,5 @@
 import sys
 
-import mlx
 import mlx.core as mx
 import mlx.utils as utils
 

@@ -1,15 +1,13 @@
-from typing import Any
 
 import argparse
 import asyncio
 import os
 import getpass
-from pathlib import Path
 from mlx_configure.hosts import check_ring
 from shared.config import *
 from mlx_configure.distributed_config import distributed_config
 from mlx_configure.run import run
-from mlx_configure.rsync import sync_all_hosts, load_hosts
+from mlx_configure.rsync import sync_all_hosts
 from mlx_configure.restart import restart_all_hosts, restart_host, load_hosts_from_json
 from mlx_configure.enable_nopasswd_sudo import enable_nopasswd_all_hosts
 from mlx_configure.ring_sync import sync_through_ring
@@ -236,13 +234,13 @@ async def handle_sudo_command(args):
         rule_target = args.rule_target
         
         # Show what we're about to do
-        print(f"Enable Password-less Sudo Configuration")
-        print(f"=" * 40)
+        print("Enable Password-less Sudo Configuration")
+        print("=" * 40)
         print(f"Active hosts from config.yaml: {active_hosts}")
         print(f"Number of hosts to configure: {len(hosts_to_configure)}")
         print(f"Remote user: {remote_user}")
         print(f"Rule target: {rule_target}")
-        print(f"=" * 40)
+        print("=" * 40)
         
         # Warn about security implications
         if rule_target == "%admin":
@@ -260,7 +258,7 @@ async def handle_sudo_command(args):
                         return 0
         
         # Get sudo password
-        sudo_password = getpass.getpass(f"\nAdmin password for sudo on remote hosts: ")
+        sudo_password = getpass.getpass("\nAdmin password for sudo on remote hosts: ")
         
         print(f"\nApplying configuration to {len(hosts_to_configure)} hosts...")
         print("-" * 40)
@@ -287,7 +285,7 @@ async def handle_sudo_command(args):
         if successful > 0:
                 print(f"\n✅ Password-less sudo enabled on {successful} host(s)")
                 print(f"   Rule: {rule_target} ALL=(ALL) NOPASSWD:ALL")
-                print(f"   File: /etc/sudoers.d/fleet-nopasswd")
+                print("   File: /etc/sudoers.d/fleet-nopasswd")
         
         # Return error if any failed
         return 1 if failed > 0 else 0
