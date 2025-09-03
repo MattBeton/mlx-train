@@ -12,6 +12,7 @@ from mlx_configure.run import run
 from mlx_configure.rsync import sync_all_hosts, load_hosts
 from mlx_configure.restart import restart_all_hosts, restart_host, load_hosts_from_json
 from mlx_configure.enable_nopasswd_sudo import enable_nopasswd_all_hosts
+from mlx_configure.ring_sync import sync_through_ring
 
 async def rsync_to_hosts(active_hosts):
         """
@@ -292,6 +293,24 @@ async def handle_sudo_command(args):
         return 1 if failed > 0 else 0
 
 
+async def handle_ring_sync_command(args):
+        """Handle the ring-sync command - sync files through the ring topology."""
+        print("Starting ring-based synchronization...")
+        
+        # Run the ring sync
+        result = await sync_through_ring(
+                args.source,
+                args.destination,
+                args.initial_host,
+                args.hosts_file,
+                args.propagate_keys,
+                args.verbose,
+                args.parallel
+        )
+        
+        return result
+
+
 def main():
         parser = argparse.ArgumentParser(
                 description="Remote management tool for distributed MLX training."
@@ -389,6 +408,61 @@ Note: Use % for group names (e.g., %admin, %wheel)
                 action="store_true",
                 help="Don't prompt for confirmation (use with caution)"
         )
+        
+        # Ring sync command
+        parser_ring_sync = subparsers.add_parser(
+                "ring-sync",
+                help="Sync files through the ring of hosts",
+                description="Propagate files from one node to all others via ring topology",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""Examples:
+    # Sync local folder to all nodes through the ring:
+    python remote.py ring-sync /path/to/folder /remote/destination
+    
+    # Sync from a specific host through the ring:
+    python remote.py ring-sync /path/to/folder /remote/destination --initial-host james
+    
+    # Propagate SSH keys first to ensure connectivity:
+    python remote.py ring-sync /path/to/folder /remote/destination --propagate-keys
+    
+    # Use verbose output:
+    python remote.py ring-sync /path/to/folder /remote/destination --verbose
+    
+Note: This syncs files sequentially through the ring topology defined in hosts.json
+                """
+        )
+        parser_ring_sync.add_argument(
+                "source",
+                help="Source path to sync (local or on initial-host)"
+        )
+        parser_ring_sync.add_argument(
+                "destination",
+                help="Destination path on all remote hosts"
+        )
+        parser_ring_sync.add_argument(
+                "--initial-host",
+                help="Host that initially has the files (default: local machine)"
+        )
+        parser_ring_sync.add_argument(
+                "--hosts-file",
+                default="hosts.json",
+                help="Path to hosts JSON file (default: hosts.json)"
+        )
+        parser_ring_sync.add_argument(
+                "--propagate-keys",
+                action="store_true",
+                help="Propagate SSH keys around the ring before syncing"
+        )
+        parser_ring_sync.add_argument(
+                "--verbose",
+                action="store_true",
+                help="Enable verbose output"
+        )
+        parser_ring_sync.add_argument(
+                "--parallel",
+                action="store_true",
+                help="Sync to multiple nodes in parallel (faster but progress may be unclear)"
+        )
 
         args = parser.parse_args()
         
@@ -406,6 +480,10 @@ Note: Use % for group names (e.g., %admin, %wheel)
         elif args.command == "sudo":
                 # Run the sudo configuration handler
                 result = asyncio.run(handle_sudo_command(args))
+                exit(result)
+        elif args.command == "ring-sync":
+                # Run the ring sync handler
+                result = asyncio.run(handle_ring_sync_command(args))
                 exit(result)
 
 
