@@ -5,3 +5,8 @@ model_output/
 out*/
 
 hosts.json
+
+*.png
+*.dot
+
+.DS_Store

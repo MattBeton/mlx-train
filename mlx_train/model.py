@@ -6,7 +6,8 @@ import mlx.core as mx
 
 from mlx.utils import tree_flatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer
-from mlx_lm.tuner.utils import linear_to_lora_layers, get_lora_keys
+# from mlx_lm.tuner.utils import linear_to_lora_layers, get_lora_keys
+from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import grad_checkpoint
 from mlx_lm.utils import load_model as mlx_load_model
 
