@@ -23,15 +23,16 @@ class PPPTrainModel(nn.Module):
 
         if distributed:
             self.layers = cast(list[_LayerCallable], self.layers)
-            if dist.rank == 0:
-                self.layers[0] = PipelineLastLayer(self.layers[0], dist.rank, dist.size)
-            if dist.rank == 3:
-                self.layers[0] = PipelineFirstLayer(self.layers[0], dist.rank, dist.size)
-            else:
-                self.layers[0] = PipelineFirstLayer(PipelineLastLayer(self.layers[0], dist.rank, dist.size), dist.rank, dist.size)
+            # if dist.rank == 0:
+            #     self.layers[0] = PipelineLastLayer(self.layers[0], dist.rank, dist.size)
+            # if dist.rank == 3:
+            #     self.layers[0] = PipelineFirstLayer(self.layers[0], dist.rank, dist.size)
+            # else:
+            #     self.layers[0] = PipelineFirstLayer(PipelineLastLayer(self.layers[0], dist.rank, dist.size), dist.rank, dist.size)
 
             for i, layer in enumerate(self.layers):
-                if isinstance(layer, nn.Linear):
+                # if isinstance(layer, nn.Linear):
+                if i != dist.rank:
                     self.layers[i] = IdentityLayer()
 
     def __call__(self, x: mx.array):
@@ -40,6 +41,34 @@ class PPPTrainModel(nn.Module):
             x = layer(x)
 
         return x
+
+def build_grads_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
+    if dist.rank != 0:
+        x = mx.distributed.recv_like(x, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
+
+    y_s = model(x)
+
+    if dist.rank != dist.size - 1:
+        send_y_s = mx.distributed.send(y_s, dst=dist.rank + 1)
+    else:
+        send_y_s = None
+
+    if dist.rank != dist.size - 1:
+        dy_s = mx.distributed.recv_like(y_s, src=dist.rank + 1)
+    def local_loss(model, x):
+        y_inner = model(x)
+        if dist.rank == dist.size - 1:
+            return mx.sum(y_inner * mx.stop_gradient(dy_s))
+        else:
+            return nn.losses.mse_loss(y_inner, y)
+    _, g_s = nn.value_and_grad(model, local_loss)(model, x)
+
+    if dist.rank != 0:
+        send_g_s = mx.distributed.send(g_s, dst=dist.rank - 1)
+    else:
+        send_g_s = None
+
+    return g_s, (send_y_s, send_g_s,)
 
 def main():
     dist.init_process_group()
@@ -52,6 +81,12 @@ def main():
     x = mx.random.normal((4, 16))
     y = mx.random.normal((4, 16))
     mx.eval(x, model, y)
+
+    g_s, others = build_grads_graph(model, x, y)
+    named = {}
+    tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
+    mx.export_to_dot('g_s.dot', **named)
+
 
     def loss(model, x, y):
         yhat = model(x)
