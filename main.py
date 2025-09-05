@@ -52,8 +52,7 @@ def _depends_like(x: mx.array, dep: mx.array) -> mx.array:
     return x + zero * z # broadcasts scalar z
 
 def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
-    # tokens = {}
-    tokens = []
+    tokens = {}
 
     if dist.rank != 0:
         x = mx.distributed.recv_like(x, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
@@ -65,14 +64,11 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
     if dist.rank != dist.size - 1:
         # Send residual stream to next device
         tok_y = mx.distributed.send(y_s, dst=dist.rank + 1)
-        # tokens['y_s'] = tok_y
-        tokens.append(tok_y)
+        tokens['y_s'] = tok_y
 
         # Receive gradients from backwards pass
         dy_s = mx.distributed.recv_like(y_s, src=dist.rank + 1)
         dy_s = _depends_like(dy_s, tok_y) # We must have sent the y tokens before we try to receive the cotangents
-
-        # tokens['dy_s'] = dy_s # unnecessary
 
     def local_loss(params, x):
         model.update(params)
@@ -90,11 +86,9 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
     tok_dx = None
     if dist.rank != 0:
         tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
+        tokens['dx'] = tok_dx
 
-        # tokens['dx'] = tok_dx
-        tokens.append(tok_dx)
-
-    return loss, g_s, (y_s, tok_y, dy_s, tok_dx)
+    return loss, g_s, tokens
 
 def main():
     dist.init_process_group()
@@ -110,37 +104,8 @@ def main():
     loss, g_s, tokens = step_graph(model, x, y)
 
     export_graph(loss, g_s, tokens, x, y, model)
-    mx.eval(loss, g_s, *[t for t in tokens if t is not None])
-
-    # dist.rprint(str(g_s))
-    # dist.rprint(str(loss), all=True)
-    # dist.rprint(str([tok.flatten()[0] if tok is not None else None for tok in tokens]), all=True)
-
-    # named = {}
-    # tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
-    # mx.export_to_dot('g_s.dot', **named)
-
-
-    # def loss(model, x, y):
-    #     yhat = model(x)
-    #     return nn.losses.mse_loss(yhat, y)
-    #
-    # yhat = model(x)
-    # mx.export_to_dot('forwards.dot', yhat)
-
-    # loss, grads = nn.value_and_grad(model, loss)(model, x, y)
-
-    # named = {}
-    # tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), grads)
-    # mx.export_to_dot("backwards2.dot", **named)
-
-
-
-
-
-    # leaves = tree_flatten(grads)
-    # mx.export_to_dot('backwards.dot', *leaves)
-    # mx.eval(loss, grads)
+    eval_roots = [loss, g_s, *[x for x in list(tokens.values()) if x is not None]]
+    mx.eval(*eval_roots)
 
     # model, tokenizer = load_configure_model(config['model'])
     #

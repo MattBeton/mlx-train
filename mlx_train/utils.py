@@ -12,14 +12,16 @@ def build_model_path(model_id: str) -> DirectoryPath:
 def export_graph(loss, g_s, tokens, x, y, model):
     named = {}
     tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
-    (y_s, tok_y, dy_s, tok_dx) = tokens
-    if y_s is not None: named['y_s'] = y_s
-    if tok_y is not None: named['tok_y'] = tok_y
-    if dy_s is not None: named['dy_s'] = dy_s
-    if tok_dx is not None: named['tok_dx'] = tok_dx
+    
+    # Add tokens from dict to named
+    for key, value in tokens.items():
+        if value is not None:
+            named[key] = value  # Keep original naming for graph
+    
     named['loss'] = loss
     named['x'] = x
     named['y'] = y
+
     for layer in model.layers:
         if isinstance(layer, Linear):
             named['model_weight'] = layer.weight
