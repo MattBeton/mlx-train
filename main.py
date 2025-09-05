@@ -6,7 +6,7 @@ import mlx.optimizers as optim
 from mlx_train.dataset import *
 import mlx_train.distributed as dist
 from mlx_train.model import *
-from mlx_train.train import train
+from mlx_train.train import train, train_simple
 from mlx_train.ppp import _LayerCallable, PipelineFirstLayer, PipelineLastLayer, IdentityLayer
 
 from mlx.utils import tree_map_with_path, tree_flatten
@@ -15,13 +15,11 @@ from mlx_train.utils import export_graph
 from shared.config import load_config
 
 class PPPTrainModel(nn.Module):
-    def __init__(self, num_layers=4, dim=16, distributed=False):
+    def __init__(self, num_layers=4, in_dim=2, hidden=64, out_dim=1, bias=True, distributed=False):
         super().__init__()
-        self.dim = dim
-
-        self.layers = [
-            nn.Linear(self.dim, self.dim, bias=False) for _ in range(num_layers)
-        ]
+        self.layers = [nn.Linear(in_dim, hidden, bias=bias)] + \
+            [nn.Linear(hidden, hidden, bias=bias) for _ in range(num_layers - 2)] + \
+            [nn.Linear(hidden, out_dim, bias=bias)]
 
         if distributed:
             self.layers = cast(list[_LayerCallable], self.layers)
@@ -38,11 +36,23 @@ class PPPTrainModel(nn.Module):
                     self.layers[i] = IdentityLayer()
 
     def __call__(self, x: mx.array):
-        for layer in self.layers:
-            # x = nn.relu(layer(x))
-            x = layer(x)
+        for i, layer in enumerate(self.layers):
+            if not isinstance(layer, IdentityLayer):
+                if i != dist.size - 1:
+                    x = nn.relu(layer(x))
+                else:
+                    x = layer(x)
+
 
         return x
+
+    @property
+    def in_shape(self):
+        return [layer for layer in self.layers if not isinstance(layer, IdentityLayer)][0].weight.shape[1]
+
+    # @property
+    # def out_shape(self):
+    #     return [layer for layer in self.layers if not isinstance(layer, IdentityLayer)][-1].weight.shape[0]
 
 
 def _depends_like(x: mx.array, dep: mx.array) -> mx.array:
@@ -55,7 +65,7 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
     tokens = {}
 
     if dist.rank != 0:
-        x = mx.distributed.recv_like(x, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
+        x = mx.distributed.recv(shape=(x.shape[0], model.in_shape), dtype=x.dtype, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
 
     y_s = model(x)
 
@@ -97,15 +107,24 @@ def main():
 
     model = PPPTrainModel(distributed=True)
 
-    x = mx.random.normal((4, 16))
-    y = mx.random.normal((4, 16))
+    x = mx.random.normal((4, 2))
+    y = mx.random.normal((4, 1))
     mx.eval(x, model, y)
 
     loss, g_s, tokens = step_graph(model, x, y)
 
-    export_graph(loss, g_s, tokens, x, y, model)
-    eval_roots = [loss, g_s, *[x for x in list(tokens.values()) if x is not None]]
-    mx.eval(*eval_roots)
+    # export_graph(loss, g_s, tokens, x, y, model)
+    # eval_roots = [loss, g_s, *[x for x in list(tokens.values()) if x is not None]]
+    # mx.eval(*eval_roots)
+    
+    # optimizer = optim.Adam(**config['optimizer'])
+    optimizer = optim.SGD(learning_rate=0.01)
+
+    def dataset_fn(n=config['dataset']['batch_size']):
+        Xtr = mx.random.uniform(shape=(n, 2))
+        ytr = (Xtr[:, 0:1] * Xtr[:, 1:2])
+        return Xtr, ytr
+    train_simple(model, step_graph, optimizer, dataset_fn, config)
 
     # model, tokenizer = load_configure_model(config['model'])
     #

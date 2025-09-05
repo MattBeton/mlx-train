@@ -20,6 +20,8 @@ class _LayerCallable(Protocol):
     protocol matches the vast majority of `mlx.nn.Module` subclasses.
     """
 
+    weight: mx.array
+
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
 
 

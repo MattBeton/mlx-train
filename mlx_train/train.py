@@ -61,3 +61,59 @@ def train(model: nn.Module, optimizer, dataset_iter, config):
 
         if examples_trained >= config['dataset']['dataset_examples'] * config['dataset']['epochs']:
             break
+
+
+
+
+def train_step_simple(model, build_graph, optimizer, batch):
+    state = [model.state, optimizer.state, mx.random.state]
+
+    # @partial(mx.compile, inputs=state, outputs=state)
+    def step(x, y):
+        loss, g_s, tokens = build_graph(model, x, y)
+        optimizer.update(model, g_s)
+
+        # mx.eval(grads)
+        # print(tree_map(lambda x: x.dtype, grads))
+
+        return loss, tokens
+
+    loss, tokens = step(*batch)
+    eval_roots = [loss, *[x for x in list(tokens.values()) if x is not None]]
+    mx.eval(eval_roots, model.state)
+    dist.barrier()
+
+    return loss.item()
+
+def train_simple(model: nn.Module, build_graph, optimizer, dataset_fn, config):
+    model.train()
+
+    examples_trained = 0
+    step_times = []
+
+    while True:
+        batch = dataset_fn()
+
+        batch = list(batch)
+        for i in range(2):
+            if dist.rank != 0:
+                batch[i] = mx.zeros_like(batch[i])
+            batch[i] = mx.distributed.all_sum(batch[i])
+            mx.eval(batch[i])
+
+        # dist.rprint(batch[0].flatten()[:10], all=True)
+        # dist.rprint(batch[1].flatten()[:5], all=True)
+        # break
+
+        start_time = time.time()
+        loss = train_step_simple(model, build_graph, optimizer, batch)
+        step_time = time.time() - start_time
+        step_times.append(step_time)
+
+        examples_trained += batch[0].shape[0]
+
+        avg_step_time = sum(step_times) / len(step_times)
+        dist.rprint(f'{loss=}, {examples_trained=}, avg_step_time={avg_step_time:.3f}s', only=dist.size-1)
+
+        if examples_trained >= 1000:
+            break
