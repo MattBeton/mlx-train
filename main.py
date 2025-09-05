@@ -1,5 +1,6 @@
 from typing import cast
 
+from mlx.nn import Linear
 import mlx.optimizers as optim
 
 from mlx_train.dataset import *
@@ -10,6 +11,7 @@ from mlx_train.ppp import _LayerCallable, PipelineFirstLayer, PipelineLastLayer,
 
 from mlx.utils import tree_map_with_path, tree_flatten
 
+from mlx_train.utils import export_graph
 from shared.config import load_config
 
 class PPPTrainModel(nn.Module):
@@ -50,6 +52,7 @@ def _depends_like(x: mx.array, dep: mx.array) -> mx.array:
     return x + zero * z # broadcasts scalar z
 
 def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
+    # tokens = {}
     tokens = []
 
     if dist.rank != 0:
@@ -58,14 +61,18 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
     y_s = model(x)
 
     tok_y = None
+    dy_s = None
     if dist.rank != dist.size - 1:
         # Send residual stream to next device
         tok_y = mx.distributed.send(y_s, dst=dist.rank + 1)
+        # tokens['y_s'] = tok_y
         tokens.append(tok_y)
 
         # Receive gradients from backwards pass
         dy_s = mx.distributed.recv_like(y_s, src=dist.rank + 1)
         dy_s = _depends_like(dy_s, tok_y) # We must have sent the y tokens before we try to receive the cotangents
+
+        # tokens['dy_s'] = dy_s # unnecessary
 
     def local_loss(params, x):
         model.update(params)
@@ -80,12 +87,14 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
         model.trainable_parameters(), x
     )
 
+    tok_dx = None
     if dist.rank != 0:
         tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
 
+        # tokens['dx'] = tok_dx
         tokens.append(tok_dx)
 
-    return loss, g_s, tokens
+    return loss, g_s, (y_s, tok_y, dy_s, tok_dx)
 
 def main():
     dist.init_process_group()
@@ -93,7 +102,6 @@ def main():
     config = load_config()
 
     model = PPPTrainModel(distributed=True)
-    # model = PPPTrainModel()
 
     x = mx.random.normal((4, 16))
     y = mx.random.normal((4, 16))
@@ -101,15 +109,12 @@ def main():
 
     loss, g_s, tokens = step_graph(model, x, y)
 
-    named = {}
-    tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
-    mx.export_to_dot('g_s.dot', loss, *tokens, **named)
+    export_graph(loss, g_s, tokens, x, y, model)
+    mx.eval(loss, g_s, *[t for t in tokens if t is not None])
 
-
-    mx.eval(loss, g_s, *tokens)
     # dist.rprint(str(g_s))
-    dist.rprint(str(loss), all=True)
-    # dist.rprint(str([tok.flatten()[0] for tok in tokens]), all=True)
+    # dist.rprint(str(loss), all=True)
+    # dist.rprint(str([tok.flatten()[0] if tok is not None else None for tok in tokens]), all=True)
 
     # named = {}
     # tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
