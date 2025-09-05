@@ -42,6 +42,13 @@ class PPPTrainModel(nn.Module):
 
         return x
 
+
+def _depends_like(x: mx.array, dep: mx.array) -> mx.array:
+    """Return x, but make it depend on dep (no numerical effect)."""
+    z = mx.sum(mx.stop_gradient(dep))
+    zero = mx.array(0, dtype=x.dtype)
+    return x + zero * z # broadcasts scalar z
+
 def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
     tokens = []
 
@@ -50,14 +57,15 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
 
     y_s = model(x)
 
+    tok_y = None
     if dist.rank != dist.size - 1:
+        # Send residual stream to next device
         tok_y = mx.distributed.send(y_s, dst=dist.rank + 1)
         tokens.append(tok_y)
 
-    if dist.rank != dist.size - 1:
+        # Receive gradients from backwards pass
         dy_s = mx.distributed.recv_like(y_s, src=dist.rank + 1)
-
-        # (dy_s,) = mx.depends([dy_s], [tok_y])
+        dy_s = _depends_like(dy_s, tok_y) # We must have sent the y tokens before we try to receive the cotangents
 
     def local_loss(params, x):
         model.update(params)
@@ -74,6 +82,7 @@ def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
 
     if dist.rank != 0:
         tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
+
         tokens.append(tok_dx)
 
     return loss, g_s, tokens
@@ -95,8 +104,12 @@ def main():
     named = {}
     tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
     mx.export_to_dot('g_s.dot', loss, *tokens, **named)
-    mx.eval(loss, *tokens, **named)
-    # mx.eval(loss, g_s, *tokens)
+
+
+    mx.eval(loss, g_s, *tokens)
+    # dist.rprint(str(g_s))
+    dist.rprint(str(loss), all=True)
+    # dist.rprint(str([tok.flatten()[0] for tok in tokens]), all=True)
 
     # named = {}
     # tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
