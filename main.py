@@ -42,33 +42,41 @@ class PPPTrainModel(nn.Module):
 
         return x
 
-def build_grads_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
+def step_graph(model: PPPTrainModel, x: mx.array, y: mx.array):
+    tokens = []
+
     if dist.rank != 0:
         x = mx.distributed.recv_like(x, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
 
     y_s = model(x)
 
     if dist.rank != dist.size - 1:
-        send_y_s = mx.distributed.send(y_s, dst=dist.rank + 1)
-    else:
-        send_y_s = None
+        tok_y = mx.distributed.send(y_s, dst=dist.rank + 1)
+        tokens.append(tok_y)
 
     if dist.rank != dist.size - 1:
         dy_s = mx.distributed.recv_like(y_s, src=dist.rank + 1)
-    def local_loss(model, x):
-        y_inner = model(x)
-        if dist.rank == dist.size - 1:
-            return mx.sum(y_inner * mx.stop_gradient(dy_s))
+
+        # (dy_s,) = mx.depends([dy_s], [tok_y])
+
+    def local_loss(params, x):
+        model.update(params)
+        y_s = model(x)
+
+        if dist.rank != dist.size - 1:
+            return mx.sum(y_s * mx.stop_gradient(dy_s))
         else:
-            return nn.losses.mse_loss(y_inner, y)
-    _, g_s = nn.value_and_grad(model, local_loss)(model, x)
+            return nn.losses.mse_loss(y_s, y)
+
+    loss, (g_s, dx) = mx.value_and_grad(local_loss, argnums=(0,1))(
+        model.trainable_parameters(), x
+    )
 
     if dist.rank != 0:
-        send_g_s = mx.distributed.send(g_s, dst=dist.rank - 1)
-    else:
-        send_g_s = None
+        tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
+        tokens.append(tok_dx)
 
-    return g_s, (send_y_s, send_g_s,)
+    return loss, g_s, tokens
 
 def main():
     dist.init_process_group()
@@ -82,18 +90,25 @@ def main():
     y = mx.random.normal((4, 16))
     mx.eval(x, model, y)
 
-    g_s, others = build_grads_graph(model, x, y)
+    loss, g_s, tokens = step_graph(model, x, y)
+
     named = {}
     tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
-    mx.export_to_dot('g_s.dot', **named)
+    mx.export_to_dot('g_s.dot', loss, *tokens, **named)
+    mx.eval(loss, *tokens, **named)
+    # mx.eval(loss, g_s, *tokens)
+
+    # named = {}
+    # tree_map_with_path(lambda path, a: named.__setitem__("grads/" + path, a), g_s)
+    # mx.export_to_dot('g_s.dot', **named)
 
 
-    def loss(model, x, y):
-        yhat = model(x)
-        return nn.losses.mse_loss(yhat, y)
-
-    yhat = model(x)
-    mx.export_to_dot('forwards.dot', yhat)
+    # def loss(model, x, y):
+    #     yhat = model(x)
+    #     return nn.losses.mse_loss(yhat, y)
+    #
+    # yhat = model(x)
+    # mx.export_to_dot('forwards.dot', yhat)
 
     # loss, grads = nn.value_and_grad(model, loss)(model, x, y)
 
