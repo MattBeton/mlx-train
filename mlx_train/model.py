@@ -27,6 +27,7 @@ def load_model(model_config: dict) -> tuple[nn.Module, TokenizerWrapper]:
     return model, tokenizer
 
 def lora_model(model: nn.Module, lora_config) -> nn.Module:
+    model.freeze()
     linear_to_lora_layers(model, lora_config['num_layers'], lora_config, lora_config.get('use_dora', False))
 
 def apply_gradient_checkpointing(model, model_config: dict) -> None:
@@ -49,6 +50,11 @@ def load_configure_model(model_config: dict):
         lora_model(model, model_config['lora'])
 
     apply_gradient_checkpointing(model, model_config)
+
+    all_params = tree_flatten(model.parameters())
+    trainable_params = tree_flatten(model.trainable_parameters())
+    # print([x[0] for x in all_params])
+    # print([x[0] for x in trainable_params])
     
     # Apply auto-parallel if specified in config
     if 'auto_parallel' in model_config:
@@ -69,6 +75,8 @@ def load_configure_model(model_config: dict):
     # Calculate total and trainable parameters
     all_params = tree_flatten(model.parameters())
     trainable_params = tree_flatten(model.trainable_parameters())
+    # print([x[0] for x in all_params])
+    # print([x[0] for x in trainable_params])
    
     total_params = sum(p.size for _, p in all_params) # type: ignore
     total_trainable = sum(p.size for _, p in trainable_params) # type: ignore
@@ -76,7 +84,7 @@ def load_configure_model(model_config: dict):
     # Calculate memory usage in MB
     total_memory = sum(p.nbytes for _, p in all_params) / (1024 * 1024) # type: ignore
     
-    dist.rprint(f'Model loaded - Total params: {total_params:,} | Trainable params: {total_trainable:,} | Memory: {total_memory:.2f} MB')
+    dist.rprint(f'Model loaded - Total params: {total_params:,} | Trainable params: {total_trainable:,} | Memory: {total_memory:.2f} MB', all=True)
 
     return model, tokenizer
 

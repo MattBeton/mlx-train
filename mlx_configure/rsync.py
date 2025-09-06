@@ -228,6 +228,18 @@ def rsync(host, destination_path_str: str, source_path_str: str = "./", setup_uv
     except subprocess.CalledProcessError:
       raise Exception(f"uv not accessible after installation. PATH prefix: {uv_path_prefix}")
     
+    # Check for custom packages and upgrade them before sync
+    custom_packages = get_custom_packages(PYPROJECT_FILE)
+    if custom_packages:
+      print(f"  Upgrading custom packages on {ssh_host}: {', '.join(custom_packages)}")
+      for package in custom_packages:
+        upgrade_cmd = [
+          "ssh",
+          ssh_host,
+          f"{uv_path_prefix}cd {destination_path_str} && uv lock --upgrade-package {package}",
+        ]
+        subprocess.run(upgrade_cmd, check=True, capture_output=True, text=True, encoding='utf-8')
+    
     # Now run uv sync
     sync_cmd = [
       "ssh",

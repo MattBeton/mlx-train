@@ -20,35 +20,10 @@ def main():
     dist.init_process_group()
 
     config = load_config()
-    mx.random.seed = 42
-    np.random.seed = 42
+    # mx.random.seed = 42
+    # np.random.seed = 42
 
-    # model = PPPTrainModel(distributed=True)
-    #
-    # x = mx.random.normal((4, 2))
-    # y = mx.random.normal((4, 1))
-    # mx.eval(x, model, y)
-    #
-    # loss, g_s, tokens = step_graph(model, x, y)
-
-    # export_graph(loss, g_s, tokens, x, y, model)
-    # eval_roots = [loss, g_s, *[x for x in list(tokens.values()) if x is not None]]
-    # mx.eval(*eval_roots)
-    
-    # optimizer = optim.Adam(**config['optimizer'])
-    # optimizer = optim.SGD(learning_rate=0.01)
-    #
-    # def dataset_fn(n=config['dataset']['batch_size']):
-    #     Xtr = mx.random.uniform(shape=(n, 2))
-    #     ytr = (Xtr[:, 0:1] * Xtr[:, 1:2])
-    #     return Xtr, ytr
-    # train_simple(model, step_graph, optimizer, dataset_fn, config)
-
-    # model, tokenizer = load_configure_model(config['model'])
-    # del config['model']['auto_parallel']
     model, tokenizer = load_configure_model(config['model'])
-    # test = model.lm_head
-    # dist.rprint(str(dir(model)))
 
     dataset_iter = iterate_dataset(config['dataset'], tokenizer)
     optimizer = optim.Adam(**config['optimizer'])

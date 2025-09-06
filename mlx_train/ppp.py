@@ -54,6 +54,10 @@ class PipelineSlice(nn.Module):
 
         inner = _inner_model(full_model)
 
+        self.model_type = getattr(full_model, "model_type", getattr(inner, "model_type", None))
+        if self.model_type is None:
+            self.model_type = 'llama'
+
         self.start = start
         self.end = end
         self.total = len(getattr(inner, "layers", getattr(inner, "h", [])))
@@ -63,10 +67,6 @@ class PipelineSlice(nn.Module):
             self.tok_embeddings = inner.embed_tokens
 
         self.layers = getattr(inner, "layers", getattr(inner, "h", []))[start:end]
-
-        # dist.rprint(str(full_model.args.tie_word_embeddings))
-        # dist.rprint(f'{type(full_model)}, {type(inner)}')
-        # dist.rprint(str(dir(full_model)))
 
         if end == self.total:
             self.norm = inner.norm
@@ -96,7 +96,6 @@ class PipelineSlice(nn.Module):
             mask = cast(mx.array, create_attention_mask(h, return_array=True))
             mask = mx.expand_dims(mask, axis=0)
             mask = mx.expand_dims(mask, axis=0)
-            # mask = nn.MultiHeadAttention.causal_mask(h) # doesn't exist.
 
         # Run only our layer range
         for layer in self.layers:
