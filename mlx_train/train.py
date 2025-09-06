@@ -27,25 +27,55 @@ def masked_loss(logits, targets, lengths):
 
     return ce, ntoks
 
-def train_step(model, build_graph, optimizer, batch, lengths):
-    state = [model.state, optimizer.state, mx.random.state]
+# def train_step(model, build_graph, optimizer, batch, lengths):
+#     state = [model.state, optimizer.state, mx.random.state]
+#
+#     # @partial(mx.compile, inputs=state, outputs=state)
+#     def step(batch, lengths):
+#         inputs = batch[:, :-1]
+#         targets = batch[:, 1:]
+#
+#         loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
+#         optimizer.update(model, g_s)
+#
+#         return loss, tokens
+#
+#     loss, tokens = step(batch, lengths)
+#     eval_roots = [loss, *[x for x in list(tokens.values()) if x is not None]]
+#     mx.eval(*eval_roots, model.state)
+#     dist.barrier()
+#
+#     return loss.item()
 
-    @partial(mx.compile, inputs=state, outputs=state)
-    def step(batch, lengths):
-        inputs = batch[:, :-1]
-        targets = batch[:, 1:]
+def train_step_two(model, build_graph, optimizer, batch, lengths):
+    model.train()
 
-        loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
-        optimizer.update(model, g_s)
+    inputs = batch[:, :-1]
+    targets = batch[:, 1:]
 
-        return loss, tokens
+    # dist.rprint('about to build graph...', all=True)
+    loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
+    # dist.rprint(tokens.keys(), all=True)
 
-    loss, tokens = step(batch, lengths)
-    eval_roots = [loss, *[x for x in list(tokens.values()) if x is not None]]
-    mx.eval(eval_roots, model.state)
+    # dist.rprint('pre- forward pass', all=True)
+
+    fwd_tokens = [t for k,t in tokens.items() if k != 'dx' and t is not None]
+    if dist.rank == dist.size - 1:
+        fwd_tokens.append(loss)
+    mx.eval(*fwd_tokens)
     dist.barrier()
 
-    return loss.item()
+    dist.rprint(f'passed forward pass {loss}', only=dist.size-1)
+
+    optimizer.update(model, g_s)
+
+    bwd_tokens = [t for k,t in tokens.items() if k == 'dx' and t is not None]
+    mx.eval(loss, *bwd_tokens, model.state, optimizer.state)
+
+    # dist.rprint(f'passed backward pass {loss.item()}', all=True)
+    dist.barrier()
+
+    return float(loss.item())
 
 def train(model: nn.Module, build_graph, optimizer, dataset_iter, config):
     model.train()
@@ -54,22 +84,30 @@ def train(model: nn.Module, build_graph, optimizer, dataset_iter, config):
     step_times = []
 
     for batch, lengths in dataset_iter:
-        if dist.rank != 0:
-            batch = mx.zeros_like(batch)
-            # lengths = mx.zeros_like(lengths)
-        batch = mx.distributed.all_sum(batch)
+        # dist.rprint('about to allreduce tings', all=True)
+        #
+        # if dist.rank != 0:
+        #     batch = mx.zeros_like(batch)
+        # batch = mx.distributed.all_sum(batch)
+        # mx.eval(batch)
+        # dist.rprint('batch synced.', all=True)
+        #
+        # if dist.rank != 0:
+        #     lengths = mx.zeros_like(lengths)
         # lengths = mx.distributed.all_sum(lengths)
-        mx.eval(batch, lengths)
+        # mx.eval(lengths)
+        #
+        # dist.rprint('synced.', all=True)
 
         start_time = time.time()
-        loss = train_step(model, build_graph, optimizer, batch, lengths)
+        loss = train_step_two(model, build_graph, optimizer, batch, lengths)
         step_time = time.time() - start_time
         step_times.append(step_time)
 
-        examples_trained += batch.shape[0] * dist.size
+        examples_trained += batch.shape[0]
 
         avg_step_time = sum(step_times) / len(step_times)
-        dist.rprint(f'{loss=}, {examples_trained=}, avg_step_time={avg_step_time:.3f}s')
+        dist.rprint(f'{loss=}, {examples_trained=}, avg_step_time={avg_step_time:.3f}s', only=dist.size-1)
 
         if examples_trained >= config['dataset']['dataset_examples'] * config['dataset']['epochs']:
             break

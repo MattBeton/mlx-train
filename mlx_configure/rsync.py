@@ -8,6 +8,7 @@ import shutil
 import argparse
 from pathlib import Path
 import concurrent.futures
+import re
 
 GITIGNORE_FILE = '.gitignore'
 REQUIREMENTS_FILE = 'requirements.txt'  # Keep for backwards compatibility
@@ -21,6 +22,36 @@ def check_rsync():
       "Error: 'rsync' command not found. Please install rsync.", file=sys.stderr
     )
     sys.exit(1)
+
+def get_custom_packages(pyproject_path):
+  """Extract custom package names from [tool.uv.sources] in pyproject.toml."""
+  if not os.path.exists(pyproject_path):
+    return []
+  
+  try:
+    with open(pyproject_path, 'r') as f:
+      content = f.read()
+    
+    # Find the [tool.uv.sources] section
+    sources_match = re.search(r'\[tool\.uv\.sources\](.*?)(?:\n\[|\Z)', content, re.DOTALL)
+    if not sources_match:
+      return []
+    
+    sources_section = sources_match.group(1)
+    
+    # Extract package names from lines like: package-name = { git = "..." }
+    packages = []
+    for line in sources_section.split('\n'):
+      line = line.strip()
+      if '=' in line and '{' in line:
+        package_name = line.split('=')[0].strip()
+        if package_name:
+          packages.append(package_name)
+    
+    return packages
+  except Exception as e:
+    print(f"Warning: Could not parse custom packages from pyproject.toml: {e}", file=sys.stderr)
+    return []
 
 def load_hosts(filename):
   """Load host information from the JSON file."""

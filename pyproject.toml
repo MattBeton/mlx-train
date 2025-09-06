@@ -15,5 +15,8 @@ dependencies = [
     "ruff>=0.12.11",
 ]
 
+[tool.uv.sources]
+mlx-lm = { git = "https://github.com/mattbeton/mlx-lm-dev.git", branch = "dataset_local_force" }
+
 [tool.basedpyright]
 typeCheckingMode = "basic"

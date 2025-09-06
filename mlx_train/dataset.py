@@ -1,10 +1,12 @@
 import json
 import mlx.core as mx
+import numpy as np
 
 from mlx_lm.tuner.datasets import CacheDataset, ChatDataset, create_dataset
 from mlx_lm.tuner.trainer import iterate_batches
 
 import mlx_train.distributed as dist
+
 
 def iterate_dataset(dataset_config, tokenizer):
     with open(dataset_config['path'], 'r') as f:
@@ -14,19 +16,26 @@ def iterate_dataset(dataset_config, tokenizer):
     dataset = create_dataset(data, tokenizer, create_dataset_config)
     assert isinstance(dataset, ChatDataset)
 
+    # dist.rprint(dataset[0], all=True)
+
     batched_dataset = iterate_batches(
         CacheDataset(dataset), 
         batch_size=dataset_config['batch_size'], 
         max_seq_length=dataset_config['max_seq_length'],
         train=True,
+        distributed_skip=False,
     )
 
     dataset_config['dataset_examples'] = len(dataset)
 
-    for batch, meta in batched_dataset:
+    for batch, length in batched_dataset:
         # batch has shape [batch, seq]
         # meta has shape [seq, 2], where the entries 
-        yield batch, meta
+
+        # dist.rprint(batch[0].sum(), all=True)
+        # dist.rprint(length[:4], all=True)
+
+        yield batch, length
 
 # def iterate_dataset_random(dataset_config, tokenizer):
 #     while True:

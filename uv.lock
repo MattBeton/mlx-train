@@ -200,8 +200,8 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.27.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.27.1"
+source = { git = "https://github.com/mattbeton/mlx-lm-dev.git?branch=dataset_local_force#6e46cd1f1d6ae42975a2ddc954153f3d76438cb2" }
 dependencies = [
     { name = "jinja2" },
     { name = "mlx" },
@@ -209,10 +209,6 @@ dependencies = [
     { name = "protobuf" },
     { name = "pyyaml" },
     { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/4b/68a0b7cde71279ef47a3cbbbe663ea2007824d7ad93a19dc8a26ee68341a/mlx_lm-0.27.0.tar.gz", hash = "sha256:91da83708bc63e5985ff862bc1d66b1348e8af98baa8b7f873661661d8cabfd2", size = 178986, upload-time = "2025-08-29T18:00:07.404Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/9a/5d27af907b579495c5bbff3f42a4dbbe5834aaa62db1cd5f50465fa28a3d/mlx_lm-0.27.0-py3-none-any.whl", hash = "sha256:296e2fdd331db11fa14652161eca3622b2311439309b639d0832dec33fb47d55", size = 245622, upload-time = "2025-08-29T18:00:06.077Z" },
 ]
 
 [[package]]
@@ -245,7 +241,7 @@ requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "mlx", specifier = ">=0.29.0" },
     { name = "mlx-data", specifier = ">=0.1.0" },
-    { name = "mlx-lm", specifier = ">=0.27.0" },
+    { name = "mlx-lm", git = "https://github.com/mattbeton/mlx-lm-dev.git?branch=dataset_local_force" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pyyaml", specifier = ">=6.0.2" },
