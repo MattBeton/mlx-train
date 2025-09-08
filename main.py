@@ -8,6 +8,7 @@ import mlx_train.distributed as dist
 from mlx_train.model import *
 from mlx_train.train import train, masked_loss
 from mlx_train.ppp import _LayerCallable, PipelineFirstLayer, PipelineLastLayer, IdentityLayer, step_graph
+from mlx_train.model import write_adapters_distributed
 
 from mlx.utils import tree_map_with_path, tree_flatten
 from mlx_lm.tuner.trainer import default_loss
@@ -30,10 +31,13 @@ def main():
 
     train(model, step_graph, optimizer, dataset_iter, config)
 
-    if dist.rank == 0:
-        write_model(model, config['model'])
+    dist.rprint(f'Peak memory usage: {mx.get_peak_memory()/1024**3:.2f}GB', all=True)
 
-    print(f'Peak memory usage: {mx.get_peak_memory()/1024**3:.2f}GB')
+    if 'lora' in config['model']:
+        write_adapters_distributed(model, config['model'])
+    else:
+        dist.rprint('Non-LoRA model checkpointing not implemented.')
+
 
 if __name__ == "__main__":
     main()

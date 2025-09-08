@@ -6,8 +6,8 @@ import mlx.utils as utils
 
 rank, size = 0, 1
 
-def rprint(msg: str, all: bool = False, only: Optional[int] = None):
-    if all or (rank == 0 and not only) or rank == only:
+def rprint(msg: str, all: bool = False, only: int = 0):
+    if all or rank == only:
         print(f"Rank {rank}: {msg}")
         sys.stdout.flush()
 

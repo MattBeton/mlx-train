@@ -1,3 +1,4 @@
+from mlx.utils import tree_flatten, tree_reduce
 from shared.config import load_config
 
 from mlx_lm.utils import load
@@ -9,6 +10,8 @@ def main():
 
     # model, tokenizer = load(config['model']['repo_id'])
     model, tokenizer = load(config['model']['repo_id'], adapter_path=config['model']['output_location'], lazy=False)
+
+    # print([(x,y.sum()) for x,y in tree_flatten(model)])
 
     prompt_user = input(">>> ")
     messages = [
