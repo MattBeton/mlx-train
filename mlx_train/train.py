@@ -1,9 +1,7 @@
 import time
-from functools import partial
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.tuner.trainer import default_loss
 
 from mlx_train.utils import *
 import mlx_train.distributed as dist
@@ -59,7 +57,10 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
     fwd_eval = [t for k,t in tokens.items() if k != 'dx' and t is not None]
     if dist.rank == dist.size - 1:
         fwd_eval.append(loss)
+    time.sleep(1.4)
+    dist.rprint('started fwd', all=True)
     mx.eval(*fwd_eval)
+    dist.rprint('finished fwd', all=True)
     dist.barrier()
 
     optimizer.update(model, g_s)
@@ -78,7 +79,12 @@ def train(model: nn.Module, build_graph, optimizer, dataset_iter, config):
     examples_trained = 0
     step_times = []
 
+    dist.rprint(f'pre-train peak memory: {mx.get_peak_memory() / 1024**3:.2f} GB', all=True)
+    mx.reset_peak_memory()
+
     for batch, lengths in dataset_iter:
+        dist.rprint(f'{fmt_bytes(bytes_of_optimizer(optimizer))=}, {fmt_bytes(bytes_of_module(model))=}')
+
         start_time = time.time()
         loss = train_step_two(model, build_graph, optimizer, batch, lengths)
         step_time = time.time() - start_time

@@ -10,7 +10,7 @@ from mlx.utils import tree_flatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer
 from mlx_lm.tuner.utils import linear_to_lora_layers, get_lora_keys
 from mlx_lm.tuner.trainer import grad_checkpoint
-from mlx_lm.utils import load_config, load_model as mlx_load_model
+from mlx_lm.utils import load_model as mlx_load_model
 
 from mlx_train.utils import build_model_path
 import mlx_train.distributed as dist
@@ -47,18 +47,18 @@ def apply_gradient_checkpointing(model, model_config: dict) -> None:
 def load_configure_model(model_config: dict):
     dist.rprint('loading model...', all=True)
     model, tokenizer = load_model(model_config)
-    dist.rprint('loaded!', all=True)
 
+    dist.rprint('applying lora', all=True)
     if 'lora' in model_config:
         lora_model(model, model_config['lora'])
 
+    dist.rprint('applying gradient checkpointing', all=True)
     apply_gradient_checkpointing(model, model_config)
 
     all_params = tree_flatten(model.parameters())
     trainable_params = tree_flatten(model.trainable_parameters())
-    # print([x[0] for x in all_params])
-    # print([x[0] for x in trainable_params])
-    
+
+    dist.rprint('applying autoparallelization', all=True)
     # Apply auto-parallel if specified in config
     if 'auto_parallel' in model_config:
         auto_parallel_config = model_config['auto_parallel']
@@ -74,9 +74,10 @@ def load_configure_model(model_config: dict):
             # end_layer = auto_parallel_config.get('end_layer', end_layer)
 
             model = PipelineSlice(model, start_layer, end_layer)
-    
+
+    dist.barrier()
     mx.eval(model)
-    dist.rprint('realized tensors', all=True)
+    dist.barrier()
 
     # Calculate total and trainable parameters
     all_params = tree_flatten(model.parameters())
@@ -223,14 +224,14 @@ def write_adapters_distributed_old(local_slice: PipelineSlice, model_config: dic
 
     adapter_weights_tmp = dict(tree_flatten(local_slice.trainable_parameters()))
     i = 0
-    for key, tensor in adapter_weights_tmp.items():
-        flat_vals = tensor.flatten()[:5]  # First 5 values from each tensor
-        nonzero_count = mx.sum(tensor != 0).item()
-        total_count = tensor.size
-        dist.rprint(f"LoRA {key}: first_5_vals={flat_vals}, nonzero={nonzero_count}/{total_count}, mean={mx.mean(tensor):.6f}")
-        if i > 10:
-            break
-        i += 1
+    # for key, tensor in adapter_weights_tmp.items():
+    #     flat_vals = tensor.flatten()[:5]  # First 5 values from each tensor
+    #     nonzero_count = mx.sum(tensor != 0).item()
+    #     total_count = tensor.size
+    #     dist.rprint(f"LoRA {key}: first_5_vals={flat_vals}, nonzero={nonzero_count}/{total_count}, mean={mx.mean(tensor):.6f}")
+    #     if i > 10:
+    #         break
+    #     i += 1
 
     # Compute slice bounds, canonical key order, and shapes/dtypes for every rank.
     global_keys_by_rank: Dict[int, List[str]] = {}
@@ -276,7 +277,7 @@ def write_adapters_distributed_old(local_slice: PipelineSlice, model_config: dic
         k: v for (k, v) in _sorted_rel_items(local_slice) if "lora_" in k
     }
     my_rel_dict: Dict[str, mx.array] = { _canon_rel(k): v for k, v in my_rel_dict_raw.items() }
-    dist.rprint(list(my_rel_dict.keys()), all=True)
+    # dist.rprint(list(my_rel_dict.keys()), all=True)
     
     # Build a shadow slice for *this* rank to derive the exact rel→global mapping
     shadow_me = PipelineSlice(ref_model, my_start, my_end)
@@ -380,16 +381,6 @@ def write_adapters_distributed_old(local_slice: PipelineSlice, model_config: dic
         for k, v in chk:
             nz = int(mx.sum(v != 0).item())
             dist.rprint(f"POST-APPLY CHECK: {k} nonzero={nz}/{v.size}", only=0)
-        
-        i = 0
-        for key, tensor in adapter_weights.items():
-            flat_vals = tensor.flatten()[:5]  # First 5 values from each tensor
-            nonzero_count = mx.sum(tensor != 0).item()
-            total_count = tensor.size
-            dist.rprint(f"LoRA {key}: first_5_vals={flat_vals}, nonzero={nonzero_count}/{total_count}, mean={mx.mean(tensor):.6f}")
-            if i > 10:
-                break
-            i += 1
 
         mx.save_safetensors(os.path.join(output_dir, "adapters.safetensors"), adapter_weights)
 
@@ -525,23 +516,6 @@ def write_adapters_distributed(local_slice: PipelineSlice, model_config: dict) -
 
         # If you see this assert, your LoRA injection targets don't match training slices.
         assert not missing, f"Missing {len(missing)} LoRA tensors when assembling adapters: e.g. {missing[:4]}"
-
-        # Quick sanity: lora_b should be non-zero
-        shown = 0
-        for key, tensor in adapter_weights.items():
-            if "lora_b" in key:
-                nz = int(mx.sum(tensor != 0).item())
-                dist.rprint(f"LoRA (POST-AGG) {key}: nonzero={nz}/{tensor.size}", only=0)
-                shown += 1
-                if shown >= 2:
-                    break
-        for key, tensor in list(adapter_weights.items())[::-1]:
-            if "lora_b" in key:
-                nz = int(mx.sum(tensor != 0).item())
-                dist.rprint(f"LoRA (POST-AGG) {key}: nonzero={nz}/{tensor.size}", only=0)
-                shown += 1
-                if shown >= 2:
-                    break
 
         mx.save_safetensors(os.path.join(output_dir, "adapters.safetensors"), adapter_weights)
 

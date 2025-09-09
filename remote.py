@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import os
 import getpass
+import subprocess
 from mlx_configure.hosts import check_ring
 from shared.config import *
 from mlx_configure.distributed_config import distributed_config
@@ -29,6 +30,54 @@ async def rsync_to_hosts(active_hosts):
         # Check if all syncs were successful
         failed = sum(1 for r in results if not r["success"])
         return 0 if failed == 0 else 1
+
+
+async def sync_lora_adapters_from_rank0(hosts):
+        """
+        Sync LoRA adapters from rank 0 host (first host) to local machine.
+        
+        Args:
+                hosts: List of hostnames from config.yaml
+        """
+        if not hosts:
+                print("✗ No hosts found to sync from")
+                return 1
+        
+        rank0_host = hosts[0]
+        print(f"\n📦 Syncing LoRA adapters from {rank0_host} (rank 0)...")
+        
+        # Use rsync to sync model_output directory from rank 0 host
+        rsync_cmd = [
+                "rsync",
+                "-avz",
+                "--delete",
+                f"{rank0_host}:/Users/Shared/mlx-train/model_output/",
+                "./model_output/"
+        ]
+        
+        try:
+                # Run rsync command
+                loop = asyncio.get_event_loop()
+                proc = await asyncio.create_subprocess_exec(
+                        *rsync_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await proc.communicate()
+                
+                if proc.returncode == 0:
+                        print(f"✓ Successfully synced LoRA adapters from {rank0_host}")
+                        return 0
+                else:
+                        print(f"✗ Failed to sync LoRA adapters from {rank0_host}")
+                        if stderr:
+                                print(f"  Error: {stderr.decode().strip()}")
+                        return proc.returncode
+                        
+        except Exception as e:
+                print(f"✗ Error syncing LoRA adapters: {e}")
+                return 1
 
 
 async def handle_run_command(args):
@@ -148,6 +197,14 @@ async def handle_run_command(args):
                 return run_result
         
         print("✓ Training complete")
+        
+        # Post-training: Sync LoRA adapters from rank 0 host
+        sync_result = await sync_lora_adapters_from_rank0(hosts)
+        
+        if sync_result != 0:
+                print(f"⚠️  Warning: Failed to sync LoRA adapters from rank 0, but training was successful")
+                # Don't fail the entire command if sync fails
+        
         return 0
 
 

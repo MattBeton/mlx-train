@@ -1,4 +1,3 @@
-from typing import Optional
 import sys
 
 import mlx.core as mx

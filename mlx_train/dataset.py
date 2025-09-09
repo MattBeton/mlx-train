@@ -1,11 +1,8 @@
 import json
-import mlx.core as mx
-import numpy as np
 
 from mlx_lm.tuner.datasets import CacheDataset, ChatDataset, create_dataset
 from mlx_lm.tuner.trainer import iterate_batches
 
-import mlx_train.distributed as dist
 
 
 def iterate_dataset(dataset_config, tokenizer):

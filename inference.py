@@ -1,4 +1,3 @@
-from mlx.utils import tree_flatten, tree_reduce
 from shared.config import load_config
 
 from mlx_lm.utils import load
