@@ -156,14 +156,14 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
     elif dist.rank != dist.size - 1:
         dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         if dist.rank == 1:
-            x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
-        else: # rank 2
             x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
+        else: # rank 2
+            x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         y = model(None, input_embeddings=x)
     else: # last rank
         dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
-        x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
-        # x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
+        # x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
+        x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
         y = model(None, input_embeddings=x)
         tokens_out['y'] = y
 
@@ -178,7 +178,7 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
 
         dist.rprint(f'send shape {y.shape}, dtype {y.dtype}', all=True)
         
-    if dist.rank % 2 == 0:
+    if dist.rank == 1:
         dist.rprint(f'sending {y.dtype} {y.shape}', all=True)
         tok_y = mx.distributed.send(y, dst=dist.rank + 1)
         tokens_out['y'] = tok_y
