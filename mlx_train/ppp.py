@@ -155,15 +155,13 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
         y = model(tokens)
     elif dist.rank != dist.size - 1:
         dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
-        if dist.rank == 1:
-            x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
-        else: # rank 2
-            x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
+        x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
+        tokens_out['x'] = x
         y = model(None, input_embeddings=x)
     else: # last rank
         dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
-        # x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
-        x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
+        x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
+        tokens_out['x'] = x
         y = model(None, input_embeddings=x)
         tokens_out['y'] = y
 
@@ -177,54 +175,48 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
         assert y.ndim == 3 and y.shape[2] == H, 'stage output must be (B, L, H)'
 
         dist.rprint(f'send shape {y.shape}, dtype {y.dtype}', all=True)
-        
-    if dist.rank == 1:
-        dist.rprint(f'sending {y.dtype} {y.shape}', all=True)
         tok_y = mx.distributed.send(y, dst=dist.rank + 1)
+
         tokens_out['y'] = tok_y
+
+        # Receive gradients from backwards pass
+        dy = mx.distributed.recv(shape=y.shape, dtype=activation_dtype, src=dist.rank + 1)
+        dy = _depends_like(dy, tok_y) # We must have sent the y tokens before we try to receive the cotangents
+        tokens_out['dy'] = dy
+
+    def local_loss(params, x):
+        model.update(params)
+        if dist.rank == 0:
+            y_loc = model(x)
+        else:
+            y_loc = model(None, input_embeddings=x)
+
+        if dist.rank != dist.size - 1:
+            dy_loc = dy.astype(y_loc.dtype) if dy.dtype != y_loc.dtype else dy
+            return mx.sum(y_loc * mx.stop_gradient(dy_loc))
+        else:
+            ce, _ = masked_loss(y_loc, targets, lengths)
+            return ce
+
+    if dist.rank == 0 and dist.rank != dist.size - 1:
+        loss, g_s = mx.value_and_grad(local_loss, argnums=(0,))(
+            model.trainable_parameters(), x
+        )
+        dx = None
     else:
-        tokens_out['y'] = y
-
-        # # Receive gradients from backwards pass
-        # dy = mx.distributed.recv(shape=y.shape, dtype=activation_dtype, src=dist.rank + 1)
-        # dy = _depends_like(dy, tok_y) # We must have sent the y tokens before we try to receive the cotangents
-
-
-
-    # def local_loss(params, x):
-    #     model.update(params)
-    #     if dist.rank == 0:
-    #         y_loc = model(x)
-    #     else:
-    #         y_loc = model(None, input_embeddings=x)
-    #
-    #     if dist.rank != dist.size - 1:
-    #         dy_loc = dy.astype(y_loc.dtype) if dy.dtype != y_loc.dtype else dy
-    #         return mx.sum(y_loc * mx.stop_gradient(dy_loc))
-    #     else:
-    #         ce, _ = masked_loss(y_loc, targets, lengths)
-    #         return ce
-    #
-    # if dist.rank == 0 and dist.rank != dist.size - 1:
-    #     loss, g_s = mx.value_and_grad(local_loss, argnums=(0,))(
-    #         model.trainable_parameters(), x
-    #     )
-    #     dx = None
-    # else:
-    #     loss, (g_s, dx) = mx.value_and_grad(local_loss, argnums=(0,1))(
-    #         model.trainable_parameters(), x
-    #     )
-    #
+        loss, (g_s, dx) = mx.value_and_grad(local_loss, argnums=(0,1))(
+            model.trainable_parameters(), x
+        )
 
     loss, g_s = None, None
 
-    # tok_dx = None
-    # if dist.rank != 0:
-    #     if dx is not None and dx.dtype != activation_dtype:
-    #         dx = dx.astype(activation_dtype)
-    #
-    #     tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
-    #     tokens_out['dx'] = tok_dx
+    tok_dx = None
+    if dist.rank != 0:
+        if dx is not None and dx.dtype != activation_dtype:
+            dx = dx.astype(activation_dtype)
+
+        tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
+        tokens_out['dx'] = tok_dx
 
     return loss, g_s, tokens_out
 

@@ -8,5 +8,6 @@ hosts.json
 
 *.png
 *.dot
+digest.txt
 
 .DS_Store

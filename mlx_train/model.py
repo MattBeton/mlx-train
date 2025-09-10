@@ -28,7 +28,6 @@ def load_model(model_config: dict) -> tuple[nn.Module, TokenizerWrapper]:
     return model, tokenizer
 
 def lora_model(model: nn.Module, lora_config) -> nn.Module:
-    model.freeze()
     linear_to_lora_layers(model, lora_config['num_layers'], lora_config, lora_config.get('use_dora', False))
 
 def apply_gradient_checkpointing(model, model_config: dict) -> None:
@@ -47,10 +46,10 @@ def apply_gradient_checkpointing(model, model_config: dict) -> None:
 def load_configure_model(model_config: dict):
     dist.rprint('loading model...', all=True)
     model, tokenizer = load_model(model_config)
+    model.freeze()
 
-    # nn.
-    dist.rprint('applying lora', all=True)
     if 'lora' in model_config:
+        dist.rprint('applying lora', all=True)
         lora_model(model, model_config['lora'])
 
     dist.rprint('applying gradient checkpointing', all=True)
@@ -77,7 +76,7 @@ def load_configure_model(model_config: dict):
             model = PipelineSlice(model, start_layer, end_layer)
 
     dist.barrier()
-    mx.eval(model)
+    # mx.eval(model)
     dist.barrier()
 
     # Calculate total and trainable parameters

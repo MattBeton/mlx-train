@@ -52,19 +52,47 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
     inputs = batch[:, :-1]
     targets = batch[:, 1:]
 
-    # inputs = inputs[:, :2]
-    # targets = targets[:, :2]
+    inputs = inputs[:, :2]
+    targets = targets[:, :2]
  
     loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
 
-    fwd_eval = [t for k,t in tokens.items() if k != 'dx' and t is not None]
-    # if dist.rank == dist.size - 1:
-    #     fwd_eval.append(loss)
+    fwd_eval = [t for k,t in tokens.items() if k == 'y' and t is not None]
+    fwd_recv_eval = [t for k,t in tokens.items() if k == 'x' and t is not None]
+    bwd_eval = [t for k,t in tokens.items() if k == 'dx' and t is not None]
+    bwd_recv_eval = [t for k,t in tokens.items() if k == 'dy' and t is not None]
+
+    if dist.rank == dist.size - 1:
+        fwd_eval.append(loss)
+
+    # dist.barrier()
+    # dist.rprint('started recv', all=True)
+    # mx.async_eval(*recv_eval)
+    # time.sleep(0.1)
+    # dist.rprint('started fwd', all=True)
+    # mx.eval(*fwd_eval)
+    # dist.rprint('finished fwd', all=True)
     
-    dist.rprint('started fwd', all=True)
-    mx.eval(*fwd_eval)
-    dist.rprint('finished fwd', all=True)
-    dist.rprint(f'{tokens["y"].shape=}', all=True)
+    for stage in range(3):
+        dist.barrier()
+        if dist.rank == stage + 1:
+            dist.rprint('started recv', all=True)
+            mx.eval(*fwd_recv_eval)
+        if dist.rank == stage:
+            dist.rprint('started fwd', all=True)
+            mx.eval(*fwd_eval)
+            dist.rprint('finished fwd', all=True)
+    
+    for stage in range(3, 0, -1):
+        dist.barrier()
+        if dist.rank == stage - 1:
+            dist.rprint('started recv', all=True)
+            mx.eval(*bwd_recv_eval)
+        if dist.rank == stage:
+            dist.rprint('started bwd', all=True)
+            mx.eval(*bwd_eval)
+            dist.rprint('finished bwd', all=True)
+
     dist.barrier()
 
     optimizer.update(model, g_s)
