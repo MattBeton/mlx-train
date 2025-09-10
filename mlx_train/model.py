@@ -48,6 +48,7 @@ def load_configure_model(model_config: dict):
     dist.rprint('loading model...', all=True)
     model, tokenizer = load_model(model_config)
 
+    # nn.
     dist.rprint('applying lora', all=True)
     if 'lora' in model_config:
         lora_model(model, model_config['lora'])

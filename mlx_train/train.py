@@ -52,15 +52,19 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
     inputs = batch[:, :-1]
     targets = batch[:, 1:]
 
+    # inputs = inputs[:, :2]
+    # targets = targets[:, :2]
+ 
     loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
 
     fwd_eval = [t for k,t in tokens.items() if k != 'dx' and t is not None]
-    if dist.rank == dist.size - 1:
-        fwd_eval.append(loss)
-    time.sleep(1.4)
+    # if dist.rank == dist.size - 1:
+    #     fwd_eval.append(loss)
+    
     dist.rprint('started fwd', all=True)
     mx.eval(*fwd_eval)
     dist.rprint('finished fwd', all=True)
+    dist.rprint(f'{tokens["y"].shape=}', all=True)
     dist.barrier()
 
     optimizer.update(model, g_s)

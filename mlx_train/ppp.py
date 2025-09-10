@@ -71,6 +71,7 @@ class PipelineSlice(nn.Module):
         if end == self.total:
             self.norm = inner.norm
             self.lm_head = inner.embed_tokens.as_linear
+            dist.rprint(f'{inner.embed_tokens.weight.shape=}', all=True)
 
         # static info for shape/dtype on this model
         self.hidden_size = int(inner.norm.weight.shape[0])
@@ -102,7 +103,8 @@ class PipelineSlice(nn.Module):
         # Head only on the last slice
         if hasattr(self, "norm"):
             h = self.norm(h)
-            return self.lm_head(h)   # (B, L, V)
+            return self.lm_head(h)
+            # return self._lm_head_chunked(h)   # (B, L, V)
         else:
             return h                 # (B, L, D)
 
@@ -144,8 +146,8 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
     tokens_out = {}
 
     B, L = tokens.shape
-    H = model.hidden_size # TODO:: This is set wrong, should be 2048
-    activation_dtype = mx.float16 # TODO: Should we be training LoRA at 16 or 32?
+    H = model.hidden_size
+    activation_dtype = mx.bfloat16 # TODO: Should we be training LoRA at 16 or 32?
 
     y = None
     if dist.rank == 0:
@@ -153,18 +155,20 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
         y = model(tokens)
     elif dist.rank != dist.size - 1:
         dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
-        x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
-        # x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
+        if dist.rank == 1:
+            x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
+        else: # rank 2
+            x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
         y = model(None, input_embeddings=x)
-    else:
-        # don't call model
+    else: # last rank
         dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
-        x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1) # here we make the assumption that the residuals are always the same shape
+        x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         # x = mx.random.normal(shape=(B, L, H), dtype=activation_dtype)
         y = model(None, input_embeddings=x)
+        tokens_out['y'] = y
 
     if y is not None and y.dtype != activation_dtype and y.ndim == 3:
-        dist.rprint('mismatched dtypes for y', all=True)
+        dist.rprint(f'mismatched dtypes for y: {y.dtype}, {activation_dtype}', all=True)
         y = y.astype(activation_dtype)
 
     tok_y = None
@@ -173,14 +177,19 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
         assert y.ndim == 3 and y.shape[2] == H, 'stage output must be (B, L, H)'
 
         dist.rprint(f'send shape {y.shape}, dtype {y.dtype}', all=True)
+        
+    if dist.rank % 2 == 0:
+        dist.rprint(f'sending {y.dtype} {y.shape}', all=True)
         tok_y = mx.distributed.send(y, dst=dist.rank + 1)
         tokens_out['y'] = tok_y
+    else:
+        tokens_out['y'] = y
 
         # # Receive gradients from backwards pass
         # dy = mx.distributed.recv(shape=y.shape, dtype=activation_dtype, src=dist.rank + 1)
         # dy = _depends_like(dy, tok_y) # We must have sent the y tokens before we try to receive the cotangents
-    else:
-        tokens_out['y'] = y
+
+
 
     # def local_loss(params, x):
     #     model.update(params)
