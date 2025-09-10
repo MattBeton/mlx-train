@@ -137,7 +137,7 @@ class PipelineLastLayer(nn.Module):
         output = mx.distributed.all_gather(output)[-output.shape[0] :]  # pyright: ignore[reportUnknownMemberType]
         return output
 
-def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengths: mx.array):
+def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengths: mx.array):
     """
     tokens  : (B, L) int32
     targets : (B, L) int32 (shifted by 1 in caller)
@@ -154,12 +154,12 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
         x = tokens
         y = model(tokens)
     elif dist.rank != dist.size - 1:
-        dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
+        # dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         tokens_out['x'] = x
         y = model(None, input_embeddings=x)
     else: # last rank
-        dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
+        # dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         tokens_out['x'] = x
         y = model(None, input_embeddings=x)
@@ -174,14 +174,15 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
     if dist.rank != dist.size - 1:
         assert y.ndim == 3 and y.shape[2] == H, 'stage output must be (B, L, H)'
 
-        dist.rprint(f'send shape {y.shape}, dtype {y.dtype}', all=True)
+        # dist.rprint(f'send shape {y.shape}, dtype {y.dtype}', all=True)
         tok_y = mx.distributed.send(y, dst=dist.rank + 1)
 
         tokens_out['y'] = tok_y
 
         # Receive gradients from backwards pass
         dy = mx.distributed.recv(shape=y.shape, dtype=activation_dtype, src=dist.rank + 1)
-        dy = _depends_like(dy, tok_y) # We must have sent the y tokens before we try to receive the cotangents
+        # dy = _depends_like(dy, tok_y) # We must have sent the y tokens before we try to receive the cotangents
+        dist.rprint(f'recv shape {dy.shape}, dtype {dy.dtype}', all=True)
         tokens_out['dy'] = dy
 
     def local_loss(params, x):
@@ -208,14 +209,13 @@ def step_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, length
             model.trainable_parameters(), x
         )
 
-    loss, g_s = None, None
-
     tok_dx = None
     if dist.rank != 0:
         if dx is not None and dx.dtype != activation_dtype:
             dx = dx.astype(activation_dtype)
 
         tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
+        dist.rprint(f'send shape {dx.shape}, dtype {dx.dtype}', all=True)
         tokens_out['dx'] = tok_dx
 
     return loss, g_s, tokens_out

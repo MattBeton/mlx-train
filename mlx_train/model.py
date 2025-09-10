@@ -76,7 +76,7 @@ def load_configure_model(model_config: dict):
             model = PipelineSlice(model, start_layer, end_layer)
 
     dist.barrier()
-    # mx.eval(model)
+    mx.eval(model)
     dist.barrier()
 
     # Calculate total and trainable parameters

@@ -25,26 +25,6 @@ def masked_loss(logits, targets, lengths):
 
     return ce, ntoks
 
-# def train_step(model, build_graph, optimizer, batch, lengths):
-#     state = [model.state, optimizer.state, mx.random.state]
-#
-#     # @partial(mx.compile, inputs=state, outputs=state)
-#     def step(batch, lengths):
-#         inputs = batch[:, :-1]
-#         targets = batch[:, 1:]
-#
-#         loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
-#         optimizer.update(model, g_s)
-#
-#         return loss, tokens
-#
-#     loss, tokens = step(batch, lengths)
-#     eval_roots = [loss, *[x for x in list(tokens.values()) if x is not None]]
-#     mx.eval(*eval_roots, model.state)
-#     dist.barrier()
-#
-#     return loss.item()
-
 def train_step_two(model, build_graph, optimizer, batch, lengths):
     # TODO: The fact that we need to do this in three explicit stages shows that the computational graph built by build_graph isn't completely correct.
     # It doesn't capture some of the dependencies that we need to be able to do this entirely in a single step.
@@ -52,8 +32,8 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
     inputs = batch[:, :-1]
     targets = batch[:, 1:]
 
-    inputs = inputs[:, :2]
-    targets = targets[:, :2]
+    # inputs = inputs[:, :2]
+    # targets = targets[:, :2]
  
     loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
 
@@ -82,7 +62,10 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
             dist.rprint('started fwd', all=True)
             mx.eval(*fwd_eval)
             dist.rprint('finished fwd', all=True)
-    
+
+    if dist.rank == 3:
+        dist.rprint(f'{loss=}', all=True)
+
     for stage in range(3, 0, -1):
         dist.barrier()
         if dist.rank == stage - 1:
@@ -96,11 +79,8 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
     dist.barrier()
 
     optimizer.update(model, g_s)
-    bwd_eval = [t for k,t in tokens.items() if k == 'dx' and t is not None]
-    mx.eval(*bwd_eval, g_s)
-    dist.barrier()
-
     mx.eval(model.state, optimizer.state)
+
     dist.barrier()
 
     return float(loss.item())
