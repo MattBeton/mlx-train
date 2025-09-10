@@ -94,6 +94,9 @@ def train(model: nn.Module, build_graph, optimizer, dataset_iter, config):
     dist.rprint(f'pre-train peak memory: {mx.get_peak_memory() / 1024**3:.2f} GB', all=True)
     mx.reset_peak_memory()
 
+    # compiled_build_graph = compiled_build_graph(model)
+    # compiled_build_graph = build_graph
+
     for batch, lengths in dataset_iter:
         dist.rprint(f'{fmt_bytes(bytes_of_optimizer(optimizer))=}, {fmt_bytes(bytes_of_module(model))=}')
 

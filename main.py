@@ -5,7 +5,7 @@ from mlx_train.dataset import *
 import mlx_train.distributed as dist
 from mlx_train.model import *
 from mlx_train.train import train
-from mlx_train.ppp import build_graph
+from mlx_train.ppp import build_graph, install_compiled_forward
 from mlx_train.model import write_adapters_distributed
 
 
@@ -25,6 +25,9 @@ def main():
     optimizer = optim.Adam(**config['optimizer'])
 
     dist.rprint(f'Pre-training peak memory usage: {mx.get_peak_memory()/1024**3:.2f}GB', all=True)
+
+    if config['model']['compile_graph']:
+        install_compiled_forward(model)
 
     train(model, build_graph, optimizer, dataset_iter, config)
 

@@ -70,11 +70,17 @@ class PipelineSlice(nn.Module):
 
         if end == self.total:
             self.norm = inner.norm
-            self.lm_head = inner.embed_tokens.as_linear
-            dist.rprint(f'{inner.embed_tokens.weight.shape=}', all=True)
+            if hasattr(full_model, 'lm_head'):
+                self.lm_head = full_model.lm_head
+                dist.rprint('using lm_head for output projection', all=True)
+            else:
+                self.lm_head = inner.embed_tokens.as_linear
+                dist.rprint('using inner.embed_tokens.as_linear for output projection', all=True)
 
         # static info for shape/dtype on this model
         self.hidden_size = int(inner.norm.weight.shape[0])
+        # dist.rprint(inner.layers[0].input_layernorm)
+        # self.hidden_dtype = inner.embed_tokens.as_linear.dtype
         self.vocab_size = inner.embed_tokens.weight.shape[0] if end == self.total else None
 
     def __call__(self,
@@ -149,24 +155,28 @@ def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengt
     H = model.hidden_size
     activation_dtype = mx.bfloat16 # TODO: Should we be training LoRA at 16 or 32?
 
+    f_tokens = getattr(model, "_compiled_fwd_tokens", None)
+    f_embeds = getattr(model, "_compiled_fwd_embeds", None)
+
+
     y = None
     if dist.rank == 0:
         x = tokens
-        y = model(tokens)
+        y = f_tokens(tokens) if f_tokens else model(tokens)
     elif dist.rank != dist.size - 1:
         # dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         tokens_out['x'] = x
-        y = model(None, input_embeddings=x)
+        y = f_embeds(x) if f_embeds else model(None, input_embeddings=x)
     else: # last rank
         # dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         tokens_out['x'] = x
-        y = model(None, input_embeddings=x)
+        y = f_embeds(x) if f_embeds else model(None, input_embeddings=x)
         tokens_out['y'] = y
 
     if y is not None and y.dtype != activation_dtype and y.ndim == 3:
-        dist.rprint(f'mismatched dtypes for y: {y.dtype}, {activation_dtype}', all=True)
+        # dist.rprint(f'mismatched dtypes for y: {y.dtype}, {activation_dtype}', all=True)
         y = y.astype(activation_dtype)
 
     tok_y = None
@@ -188,9 +198,9 @@ def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengt
     def local_loss(params, x):
         model.update(params)
         if dist.rank == 0:
-            y_loc = model(x)
+            y_loc = f_tokens(x) if f_tokens else model(x)
         else:
-            y_loc = model(None, input_embeddings=x)
+            y_loc = f_embeds(x) if f_embeds else model(None, input_embeddings=x)
 
         if dist.rank != dist.size - 1:
             dy_loc = dy.astype(y_loc.dtype) if dy.dtype != y_loc.dtype else dy
@@ -220,3 +230,17 @@ def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengt
 
     return loss, g_s, tokens_out
 
+
+def install_compiled_forward(model: PipelineSlice, *, shapeless: bool = True) -> None:
+    """
+    Compile the per-rank forward calls and attach them to the model instance.
+    We intentionally do NOT compile the outer build_graph (it returns distributed tokens).
+    """
+    def _fwd_tokens(tokens: mx.array, mask: mx.array | None = None):
+        return model(tokens, mask)
+
+    def _fwd_embeds(input_embeddings: mx.array, mask: mx.array | None = None):
+        return model(None, input_embeddings=input_embeddings, mask=mask)
+
+    setattr(model, "_compiled_fwd_tokens", mx.compile(_fwd_tokens, shapeless=shapeless))
+    setattr(model, "_compiled_fwd_embeds", mx.compile(_fwd_embeds, shapeless=shapeless))
