@@ -2,7 +2,9 @@
 .env
 */__pycache__/
 model_output/
+preference_output/
 out*/
+wandb/
 
 hosts.json
 

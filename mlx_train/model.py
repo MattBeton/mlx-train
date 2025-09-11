@@ -4,7 +4,7 @@ import json
 import mlx.nn as nn
 import mlx.core as mx
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from mlx.utils import tree_flatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer
@@ -76,7 +76,7 @@ def load_configure_model(model_config: dict):
             model = PipelineSlice(model, start_layer, end_layer)
 
     dist.barrier()
-    # mx.eval(model)
+    mx.eval(model)
     dist.barrier()
 
     # Calculate total and trainable parameters
@@ -94,6 +94,9 @@ def load_configure_model(model_config: dict):
     dist.rprint(f'Model loaded - Total params: {total_params:,} | Trainable params: {total_trainable:,} | Memory: {total_memory:.2f} MB', all=True)
 
     return model, tokenizer
+
+
+### Vibe Coded from here downwards.
 
 def _layers_total(inner_model: nn.Module) -> int:
     return len(getattr(inner_model, "layers", getattr(inner_model, "h", [])))
@@ -190,13 +193,18 @@ def _sorted_rel_items(m: nn.Module) -> List[Tuple[str, mx.array]]:
     return items
 
 
-def write_adapters_distributed(local_slice: PipelineSlice, model_config: dict) -> None:
+def write_adapters_distributed(local_slice: PipelineSlice, model_config: dict, output_filepath: Optional[str] = None) -> None:
     """
     Ring-gather LoRA tensors (neighbor-only) and write adapters.safetensors directly
     using the reference model's official key names. No Module.update() calls.
     """
-    output_dir = model_config["output_location"]
+    if output_filepath:
+        output_dir = model_config["output_location"] + output_filepath
+    else:
+        output_dir = model_config["output_location"] 
     os.makedirs(output_dir, exist_ok=True)
+
+    dist.rprint(f'writing to file {output_dir}')
 
     # 1) Reference model (lazy) only to discover official LoRA key names
     full_model_path = build_model_path(model_config["repo_id"])

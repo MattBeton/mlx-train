@@ -10,14 +10,6 @@ def rprint(msg: str, all: bool = False, only: int = 0):
         print(f"Rank {rank}: {msg}")
         sys.stdout.flush()
 
-# def assert_distributed(func):
-#     def wrapper(*args, **kwargs):
-#         if rank is None or size is None:
-#             raise Exception(f'Distributed communication performed when process group not initialized. {rank=}, {size=}')
-#         return func(*args, **kwargs)
-
-#     return wrapper
-
 def init_process_group():
     global world, rank, size
     try:

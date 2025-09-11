@@ -5,6 +5,7 @@ import mlx.nn as nn
 
 from mlx_train.utils import *
 import mlx_train.distributed as dist
+from mlx_train.logger import TrainingLogger
 
 def simple_loss_fn(model, batch, lengths):
     inputs = batch[:, :-1]
@@ -26,14 +27,9 @@ def masked_loss(logits, targets, lengths):
     return ce, ntoks
 
 def train_step_two(model, build_graph, optimizer, batch, lengths):
-    # TODO: The fact that we need to do this in three explicit stages shows that the computational graph built by build_graph isn't completely correct.
-    # It doesn't capture some of the dependencies that we need to be able to do this entirely in a single step.
     model.train()
     inputs = batch[:, :-1]
     targets = batch[:, 1:]
-
-    # inputs = inputs[:, :2]
-    # targets = targets[:, :2]
  
     loss, g_s, tokens = build_graph(model, inputs, targets, lengths)
 
@@ -44,37 +40,20 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
 
     if dist.rank == dist.size - 1:
         fwd_eval.append(loss)
-
-    # dist.barrier()
-    # dist.rprint('started recv', all=True)
-    # mx.async_eval(*recv_eval)
-    # time.sleep(0.1)
-    # dist.rprint('started fwd', all=True)
-    # mx.eval(*fwd_eval)
-    # dist.rprint('finished fwd', all=True)
     
     for stage in range(3):
         dist.barrier()
         if dist.rank == stage + 1:
-            dist.rprint('started recv', all=True)
             mx.eval(*fwd_recv_eval)
         if dist.rank == stage:
-            dist.rprint('started fwd', all=True)
             mx.eval(*fwd_eval)
-            dist.rprint('finished fwd', all=True)
-
-    if dist.rank == 3:
-        dist.rprint(f'{loss=}', all=True)
 
     for stage in range(3, 0, -1):
         dist.barrier()
         if dist.rank == stage - 1:
-            dist.rprint('started recv', all=True)
             mx.eval(*bwd_recv_eval)
         if dist.rank == stage:
-            dist.rprint('started bwd', all=True)
             mx.eval(*bwd_eval)
-            dist.rprint('finished bwd', all=True)
 
     dist.barrier()
 
@@ -85,30 +64,27 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
 
     return float(loss.item())
 
-def train(model: nn.Module, build_graph, optimizer, dataset_iter, config):
+def train(model: nn.Module, build_graph, optimizer, dataset_iter, config, write_adapters_fn=None):
     model.train()
+    
+    total_steps = config['dataset'].get('dataset_examples', 1) * config['dataset'].get('epochs', 1) // config['dataset'].get('batch_size', 1)
+    logger = TrainingLogger(config, total_steps=total_steps)
+    logger.log_pre_training()
 
-    examples_trained = 0
-    step_times = []
-
-    dist.rprint(f'pre-train peak memory: {mx.get_peak_memory() / 1024**3:.2f} GB', all=True)
-    mx.reset_peak_memory()
-
-    # compiled_build_graph = compiled_build_graph(model)
-    # compiled_build_graph = build_graph
-
+    last_loss = 0.0
     for batch, lengths in dataset_iter:
-        dist.rprint(f'{fmt_bytes(bytes_of_optimizer(optimizer))=}, {fmt_bytes(bytes_of_module(model))=}')
-
         start_time = time.time()
         loss = train_step_two(model, build_graph, optimizer, batch, lengths)
         step_time = time.time() - start_time
-        step_times.append(step_time)
+        
+        logger.log_step(loss, batch.shape, step_time, optimizer, model)
+        last_loss = loss
 
-        examples_trained += batch.shape[0]
-
-        avg_step_time = sum(step_times) / len(step_times)
-        dist.rprint(f'{loss=}, {examples_trained=}, avg_step_time={avg_step_time:.3f}s', only=dist.size-1)
-
-        if examples_trained >= config['dataset']['dataset_examples'] * config['dataset']['epochs']:
+        if logger.examples_trained >= config['dataset']['dataset_examples'] * config['dataset']['epochs']:
             break
+
+        if logger.global_step % 10 == 0 and 'lora' in config['model'] and write_adapters_fn:
+            write_adapters_fn(model, config['model'], output_filepath=f'{logger.examples_trained}')
+            logger.log_checkpoint(logger.examples_trained)
+    
+    logger.finish(last_loss)

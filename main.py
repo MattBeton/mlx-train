@@ -16,8 +16,6 @@ def main():
     dist.init_process_group()
 
     config = load_config()
-    # mx.random.seed = 42
-    # np.random.seed = 42
 
     model, tokenizer = load_configure_model(config['model'])
 
@@ -29,7 +27,7 @@ def main():
     if config['model']['compile_graph']:
         install_compiled_forward(model)
 
-    train(model, build_graph, optimizer, dataset_iter, config)
+    train(model, build_graph, optimizer, dataset_iter, config, write_adapters_distributed)
 
     dist.rprint(f'Peak memory usage: {mx.get_peak_memory()/1024**3:.2f}GB', all=True)
 

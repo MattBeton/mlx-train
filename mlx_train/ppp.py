@@ -9,24 +9,6 @@ from mlx_train.train import masked_loss
 from mlx_lm.models.base import create_attention_mask
 
 
-class IdentityLayer(nn.Module):
-    @override
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        return x
-
-
-class _LayerCallable(Protocol):
-    """Structural type that any compatible layer must satisfy.
-
-    We require a single positional input of type ``mx.array`` and an
-    ``mx.array`` output, while permitting arbitrary *args / **kwargs so this
-    protocol matches the vast majority of `mlx.nn.Module` subclasses.
-    """
-
-    weight: mx.array
-
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
-
 def _depends_like(x: mx.array, dep: mx.array) -> mx.array:
     """Return x, but make it depend on dep (no numerical effect)."""
     z = mx.sum(mx.stop_gradient(dep))
@@ -114,35 +96,6 @@ class PipelineSlice(nn.Module):
         else:
             return h                 # (B, L, D)
 
-class PipelineFirstLayer(nn.Module):
-    def __init__(self, original_layer: _LayerCallable, r: int, s: int):
-        super().__init__()
-        self.original_layer: _LayerCallable = original_layer
-        self.r: int = r
-        self.s: int = s
-
-    @override
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        if self.r != 0:
-            x = mx.distributed.recv_like(x, (self.r - 1))
-        return self.original_layer(x, *args, **kwargs)
-
-
-class PipelineLastLayer(nn.Module):
-    def __init__(self, original_layer: _LayerCallable, r: int, s: int):
-        super().__init__()
-        self.original_layer: _LayerCallable = original_layer
-        self.r: int = r
-        self.s: int = s
-
-    @override
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        output: mx.array = self.original_layer(x, *args, **kwargs)
-        if self.r != self.s - 1:
-            output = mx.distributed.send(output, (self.r + 1) % self.s)
-        output = mx.distributed.all_gather(output)[-output.shape[0] :]  # pyright: ignore[reportUnknownMemberType]
-        return output
-
 def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengths: mx.array):
     """
     tokens  : (B, L) int32
@@ -158,25 +111,23 @@ def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengt
     f_tokens = getattr(model, "_compiled_fwd_tokens", None)
     f_embeds = getattr(model, "_compiled_fwd_embeds", None)
 
-
     y = None
     if dist.rank == 0:
         x = tokens
         y = f_tokens(tokens) if f_tokens else model(tokens)
     elif dist.rank != dist.size - 1:
-        # dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         tokens_out['x'] = x
+
         y = f_embeds(x) if f_embeds else model(None, input_embeddings=x)
     else: # last rank
-        # dist.rprint(f'recv shape {(B, L, H)}, dtype {activation_dtype}', all=True)
         x = mx.distributed.recv(shape=(B, L, H), dtype=activation_dtype, src=dist.rank - 1)
         tokens_out['x'] = x
+
         y = f_embeds(x) if f_embeds else model(None, input_embeddings=x)
         tokens_out['y'] = y
 
     if y is not None and y.dtype != activation_dtype and y.ndim == 3:
-        # dist.rprint(f'mismatched dtypes for y: {y.dtype}, {activation_dtype}', all=True)
         y = y.astype(activation_dtype)
 
     tok_y = None
@@ -184,15 +135,16 @@ def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengt
     if dist.rank != dist.size - 1:
         assert y.ndim == 3 and y.shape[2] == H, 'stage output must be (B, L, H)'
 
-        # dist.rprint(f'send shape {y.shape}, dtype {y.dtype}', all=True)
         tok_y = mx.distributed.send(y, dst=dist.rank + 1)
 
         tokens_out['y'] = tok_y
 
         # Receive gradients from backwards pass
         dy = mx.distributed.recv(shape=y.shape, dtype=activation_dtype, src=dist.rank + 1)
-        # dy = _depends_like(dy, tok_y) # We must have sent the y tokens before we try to receive the cotangents
-        dist.rprint(f'recv shape {dy.shape}, dtype {dy.dtype}', all=True)
+
+        # We must have sent the y tokens before we try to receive the cotangents.
+        # This is only necessary when we do the whole train in a single step.
+        # dy = _depends_like(dy, tok_y) 
         tokens_out['dy'] = dy
 
     def local_loss(params, x):
@@ -225,7 +177,6 @@ def build_graph(model: PipelineSlice, tokens: mx.array, targets: mx.array, lengt
             dx = dx.astype(activation_dtype)
 
         tok_dx = mx.distributed.send(dx, dst=dist.rank - 1)
-        dist.rprint(f'send shape {dx.shape}, dtype {dx.dtype}', all=True)
         tokens_out['dx'] = tok_dx
 
     return loss, g_s, tokens_out
@@ -242,5 +193,18 @@ def install_compiled_forward(model: PipelineSlice, *, shapeless: bool = True) ->
     def _fwd_embeds(input_embeddings: mx.array, mask: mx.array | None = None):
         return model(None, input_embeddings=input_embeddings, mask=mask)
 
-    setattr(model, "_compiled_fwd_tokens", mx.compile(_fwd_tokens, shapeless=shapeless))
-    setattr(model, "_compiled_fwd_embeds", mx.compile(_fwd_embeds, shapeless=shapeless))
+    compiled_tokens = mx.compile(
+        _fwd_tokens, 
+        inputs=[model.state, mx.random.state],
+        outputs=[model.state, mx.random.state],
+        shapeless=shapeless
+    )
+    compiled_embeds = mx.compile(
+        _fwd_embeds, 
+        inputs=[model.state, mx.random.state],
+        outputs=[model.state, mx.random.state],
+        shapeless=shapeless
+    )
+
+    setattr(model, "_compiled_fwd_tokens", compiled_tokens)
+    setattr(model, "_compiled_fwd_embeds", compiled_embeds)
