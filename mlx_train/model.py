@@ -12,6 +12,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers, get_lora_keys
 from mlx_lm.tuner.trainer import grad_checkpoint
 from mlx_lm.utils import load_model as mlx_load_model
 
+from mlx_train.tp import TPModel
 from mlx_train.utils import build_model_path
 import mlx_train.distributed as dist
 from mlx_train.ppp import PipelineSlice, _inner_model
@@ -58,11 +59,12 @@ def load_configure_model(model_config: dict):
     all_params = tree_flatten(model.parameters())
     trainable_params = tree_flatten(model.trainable_parameters())
 
-    dist.rprint('applying autoparallelization', all=True)
     # Apply auto-parallel if specified in config
     if 'auto_parallel' in model_config:
+        dist.rprint('applying autoparallelization', all=True)
         auto_parallel_config = model_config['auto_parallel']
-        if auto_parallel_config.get('enabled', False):
+
+        if auto_parallel_config['distributed'] == 'pp':
             total_layers = len(getattr(model.model, 'layers', getattr(model.model, 'h', [])))
             layers_per_rank = total_layers // dist.size
             
@@ -74,6 +76,8 @@ def load_configure_model(model_config: dict):
             # end_layer = auto_parallel_config.get('end_layer', end_layer)
 
             model = PipelineSlice(model, start_layer, end_layer)
+        elif auto_parallel_config['distributed'] == 'tp':
+            model = TPModel(model)
 
     dist.barrier()
     mx.eval(model)
@@ -82,8 +86,6 @@ def load_configure_model(model_config: dict):
     # Calculate total and trainable parameters
     all_params = tree_flatten(model.parameters())
     trainable_params = tree_flatten(model.trainable_parameters())
-    # print([x[0] for x in all_params])
-    # print([x[0] for x in trainable_params])
    
     total_params = sum(p.size for _, p in all_params) # type: ignore
     total_trainable = sum(p.size for _, p in trainable_params) # type: ignore
@@ -96,7 +98,7 @@ def load_configure_model(model_config: dict):
     return model, tokenizer
 
 
-### Vibe Coded from here downwards.
+### Vibe Coded from here onwards.
 
 def _layers_total(inner_model: nn.Module) -> int:
     return len(getattr(inner_model, "layers", getattr(inner_model, "h", [])))
