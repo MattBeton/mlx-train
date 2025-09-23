@@ -5,7 +5,7 @@ from mlx_lm.tuner.trainer import iterate_batches
 
 
 
-def iterate_dataset(dataset_config, tokenizer):
+def iterate_dataset(dataset_config, tokenizer, parallelism):
     with open(dataset_config['path'], 'r') as f:
         data = [json.loads(l) for l in f]
 
@@ -20,7 +20,7 @@ def iterate_dataset(dataset_config, tokenizer):
         batch_size=dataset_config['batch_size'], 
         max_seq_length=dataset_config['max_seq_length'],
         train=True,
-        distributed_skip=False,
+        distributed_skip=parallelism == 'dp',
     )
 
     dataset_config['dataset_examples'] = len(dataset)
@@ -28,9 +28,6 @@ def iterate_dataset(dataset_config, tokenizer):
     for batch, length in batched_dataset:
         # batch has shape [batch, seq]
         # meta has shape [seq, 2], where the entries 
-
-        # dist.rprint(batch[0].sum(), all=True)
-        # dist.rprint(length[:4], all=True)
 
         yield batch, length
 

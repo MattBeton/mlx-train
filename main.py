@@ -19,12 +19,18 @@ def main():
 
     model, tokenizer = load_configure_model(config['model'])
 
-    dataset_iter = iterate_dataset(config['dataset'], tokenizer)
+    dataset_iter = iterate_dataset(
+        config['dataset'], 
+        tokenizer, 
+        parallelism=config.get('model', {}).get('distributed'))
+
     optimizer = optim.Adam(**config['optimizer'])
 
     dist.rprint(f'Pre-training peak memory usage: {mx.get_peak_memory()/1024**3:.2f}GB', all=True)
 
-    if config['model']['compile_graph']:
+    if config['model']['compile_graph'] and \
+        config.get('model', {}).get('distributed') == 'pp':
+        assert isinstance(model, PipelineSlice)
         install_compiled_forward(model)
 
     train(model, build_graph, optimizer, dataset_iter, config, write_adapters_distributed)
@@ -32,7 +38,10 @@ def main():
     dist.rprint(f'Peak memory usage: {mx.get_peak_memory()/1024**3:.2f}GB', all=True)
 
     if 'lora' in config['model']:
-        write_adapters_distributed(model, config['model'])
+        if config.get('model', {}).get('distributed') == 'pp':
+            write_adapters_distributed(model, config['model'])
+        elif config.get('model', {}).get('distributed') == 'dp':
+            write_adapters(model, config['model']) # TODO
     else:
         dist.rprint('Non-LoRA model checkpointing not implemented.')
 

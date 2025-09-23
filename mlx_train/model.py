@@ -60,24 +60,25 @@ def load_configure_model(model_config: dict):
     trainable_params = tree_flatten(model.trainable_parameters())
 
     # Apply auto-parallel if specified in config
-    if 'auto_parallel' in model_config:
-        dist.rprint('applying autoparallelization', all=True)
-        auto_parallel_config = model_config['auto_parallel']
+    dist.rprint('applying autoparallelization', all=True)
+    distributed_mode = model_config['distributed']
 
-        if auto_parallel_config['distributed'] == 'pp':
-            total_layers = len(getattr(model.model, 'layers', getattr(model.model, 'h', [])))
-            layers_per_rank = total_layers // dist.size
-            
-            start_layer = dist.rank * layers_per_rank
-            end_layer = (dist.rank + 1) * layers_per_rank if dist.rank < dist.size - 1 else total_layers
+    if distributed_mode == 'pp':
+        total_layers = len(getattr(model.model, 'layers', getattr(model.model, 'h', [])))
+        layers_per_rank = total_layers // dist.size
+        
+        start_layer = dist.rank * layers_per_rank
+        end_layer = (dist.rank + 1) * layers_per_rank if dist.rank < dist.size - 1 else total_layers
 
-            # TODO: Allow overrides from config if provided
-            # start_layer = auto_parallel_config.get('start_layer', start_layer)
-            # end_layer = auto_parallel_config.get('end_layer', end_layer)
+        # TODO: Allow overrides from config if provided
+        # start_layer = auto_parallel_config.get('start_layer', start_layer)
+        # end_layer = auto_parallel_config.get('end_layer', end_layer)
 
-            model = PipelineSlice(model, start_layer, end_layer)
-        elif auto_parallel_config['distributed'] == 'tp':
-            model = TPModel(model)
+        model = PipelineSlice(model, start_layer, end_layer)
+    elif distributed_mode == 'tp':
+        model = TPModel(model)
+    elif distributed_mode == 'dp':
+        dist.rprint('configured for data-parallel LoRA (no model slicing)', all=True)
 
     dist.barrier()
     mx.eval(model)
