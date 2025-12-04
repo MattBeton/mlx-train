@@ -13,3 +13,5 @@ hosts.json
 digest.txt
 
 .DS_Store
+
+uv.lock
