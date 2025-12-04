@@ -22,7 +22,8 @@ def main():
     dataset_iter = iterate_dataset(
         config['dataset'], 
         tokenizer, 
-        parallelism=config.get('model', {}).get('distributed'))
+        parallelism=config.get('model', {}).get('distributed')
+    )
 
     optimizer = optim.Adam(**config['optimizer'])
 

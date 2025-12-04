@@ -33,3 +33,15 @@ def barrier():
 
 def all_reduce_tree(object):
   return utils.tree_map(lambda x: mx.distributed.all_sum(x) / size, object)
+
+def assert_equal_across_ranks(x):
+    x_clone = mx.array(x)
+
+    # Sum across all ranks → (shape * world_size) IF all shapes match
+    average = mx.distributed.all_sum(x_clone) / mx.distributed.init().size()
+    mx.eval(average)
+
+    if not mx.all(average == mx.array(x)):
+        rprint(f"Values of tensor {x} differ across devices")
+        raise AssertionError(f"Values of tensor {x} differ across devices")
+

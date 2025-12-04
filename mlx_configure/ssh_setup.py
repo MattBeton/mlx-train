@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import List
 from shared.config import load_config
 
-from dotenv import load_dotenv
-load_dotenv()
 
 def check_sshpass() -> bool:
     """Check if sshpass is installed on the system."""

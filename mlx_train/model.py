@@ -7,12 +7,11 @@ import mlx.core as mx
 from typing import Dict, List, Tuple, Optional
 
 from mlx.utils import tree_flatten
-from mlx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer
-from mlx_lm.tuner.utils import linear_to_lora_layers, get_lora_keys
+from mlx_lm.tokenizer_utils import TokenizerWrapper, load as load_tokenizer
+from mlx_lm.tuner.utils import linear_to_lora_layers#, get_lora_keys
 from mlx_lm.tuner.trainer import grad_checkpoint
 from mlx_lm.utils import load_model as mlx_load_model
 
-from mlx_train.tp import TPModel
 from mlx_train.utils import build_model_path
 import mlx_train.distributed as dist
 from mlx_train.ppp import PipelineSlice, _inner_model
@@ -76,6 +75,7 @@ def load_configure_model(model_config: dict):
 
         model = PipelineSlice(model, start_layer, end_layer)
     elif distributed_mode == 'tp':
+        from mlx_train.tp import TPModel
         model = TPModel(model)
     elif distributed_mode == 'dp':
         dist.rprint('configured for data-parallel LoRA (no model slicing)', all=True)
