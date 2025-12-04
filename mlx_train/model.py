@@ -8,9 +8,10 @@ from typing import Dict, List, Tuple, Optional
 
 from mlx.utils import tree_flatten
 from mlx_lm.tokenizer_utils import TokenizerWrapper, load as load_tokenizer
-from mlx_lm.tuner.utils import linear_to_lora_layers#, get_lora_keys
+from mlx_lm.tuner.utils import linear_to_lora_layers
 from mlx_lm.tuner.trainer import grad_checkpoint
 from mlx_lm.utils import load_model as mlx_load_model
+from mlx_lm.models.switch_layers import SwitchLinear, QuantizedSwitchLinear
 
 from mlx_train.utils import build_model_path
 import mlx_train.distributed as dist
@@ -42,6 +43,44 @@ def apply_gradient_checkpointing(model, model_config: dict) -> None:
         grad_checkpoint(model.model.layers[0])
     elif model_config['grad_checkpoint'] != 'none':
         raise ValueError(f"Invalid gradient_checkpoint option: {model_config['grad_checkpoint']}. Must be 'none', 'medium', or 'max'")
+
+def get_lora_keys(model: nn.Module) -> set[str]:
+    """
+    Infer LoRA-able submodule names from the model, matching the new
+    mlx-lm linear_to_lora_layers behavior.
+
+    Returns:
+        A set of module path strings that should be converted to LoRA.
+    """
+    keys: set[str] = set()
+
+    def get_keys_for_lora(p: str, m: nn.Module) -> None:
+        # Same types as in the new linear_to_lora_layers
+        types = (
+            nn.Linear,
+            nn.QuantizedLinear,
+            SwitchLinear,
+            QuantizedSwitchLinear,
+            nn.Embedding,
+            nn.QuantizedEmbedding,
+        )
+
+        # Either the module exposes a custom .to_lora() or is a known
+        # linear/embedding type that we can wrap.
+        if hasattr(m, "to_lora") or isinstance(m, types):
+            keys.add(p)
+
+    # Mirror upstream: walk over the transformer blocks in model.layers.
+    # (If a model doesn't have .layers, fall back to scanning the whole model.)
+    layers = getattr(model, "layers", None)
+    if layers is not None:
+        for layer in layers:
+            layer.apply_to_modules(get_keys_for_lora)
+    else:
+        # Fallback for non-standard models
+        model.apply_to_modules(get_keys_for_lora)
+
+    return keys
 
 def load_configure_model(model_config: dict):
     dist.rprint('loading model...', all=True)
