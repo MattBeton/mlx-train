@@ -62,7 +62,7 @@ def train_step_dp(model, optimizer, batch, lengths):
 
     return float(loss_val)
 
-def train_step_two(model, build_graph, optimizer, batch, lengths):
+def train_step_pp(model, build_graph, optimizer, batch, lengths):
     model.train()
     inputs = batch[:, :-1]
     targets = batch[:, 1:]
@@ -76,15 +76,17 @@ def train_step_two(model, build_graph, optimizer, batch, lengths):
 
     if dist.rank == dist.size - 1:
         fwd_eval.append(loss)
-    
-    for stage in range(3):
+
+    max_rank = dist.size - 1
+
+    for stage in range(max_rank):
         dist.barrier()
         if dist.rank == stage + 1:
             mx.eval(*fwd_recv_eval)
         if dist.rank == stage:
             mx.eval(*fwd_eval)
 
-    for stage in range(3, 0, -1):
+    for stage in range(max_rank, 0, -1):
         dist.barrier()
         if dist.rank == stage - 1:
             mx.eval(*bwd_recv_eval)
@@ -115,7 +117,7 @@ def train(model: nn.Module, build_graph, optimizer, dataset_iter, config, write_
     for batch, lengths in dataset_iter:
         start_time = time.time()
         if dist_mode == 'pp':
-            loss = train_step_two(model, build_graph, optimizer, batch, lengths)
+            loss = train_step_pp(model, build_graph, optimizer, batch, lengths)
         else:
             loss = train_step_dp(model, optimizer, batch, lengths)
         step_time = time.time() - start_time
